@@ -5,6 +5,5 @@ import io.circe._
 import io.circe.generic.semiauto.deriveEncoder
 
 object Parsers {
-  implicit val commandDataEncoder:Encoder[CommandData] =  deriveEncoder
  implicit val heartbeatPayloadEncoder:Encoder[HeartbeatPayload] =  deriveEncoder
 }

@@ -8,7 +8,8 @@ case class DefaultConfig(
                           poolId:String,
                           exchangeName:String,
                           storagePath:String,
-                          priority: Int,
+//                          priority: Int,
                           storageNodes:List[String],
+                          heartbeatTime:Int,
                           rabbitmq: RabbitMQConfig
                         )
