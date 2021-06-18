@@ -9,6 +9,8 @@ import io.circe.{Decoder, Json}
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Payloads.UpdateReplicationFactor
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
+import org.typelevel.log4cats.Logger
+import mx.cinvestav.commons.balancer
 //
 import scala.concurrent.duration._
 import scala.language.postfixOps
@@ -16,6 +18,7 @@ import scala.language.postfixOps
 object CommandHandler {
   implicit val downloadFilePayloadDecoder:Decoder[Payloads.DownloadFilePayload] = deriveDecoder
   implicit val updateReplicationFactorPayloadDecoder:Decoder[Payloads.UpdateReplicationFactor] = deriveDecoder
+  implicit val uploadFilePayloadDecoder:Decoder[Payloads.UploadFile] = deriveDecoder
 
   def stopHeartbeat(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],
                                                                     config: DefaultConfig) = for {
@@ -57,6 +60,22 @@ object CommandHandler {
 ////      nodeState.updated("rf",currentRF+1)
 //    }.flatMap(IO.println)
 //      .flatMap(_=>IO.println(command.envelope))
+  }
+
+  def uploadFile(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],config: DefaultConfig,
+                                                logger:Logger[IO]): IO[Unit] = command
+    .payload.as[Payloads.UploadFile] match {
+    case Left(e) =>
+      IO.println(e.getMessage())
+    case Right(payload) =>
+      for {
+        currentState <- state.get
+        _        <- Logger[IO].debug(s"UPLOADING FILE  - DOWNLOAD FROM ${payload.url}")
+        lb       <-  currentState.loadBalancer.pure[IO]
+        replicas <- lb.balance(currentState.storagesNodes).pure[IO]
+        _        <- Logger[IO].debug(s"REPLICAS: ${replicas}")
+//        _ <-
+      } yield ( )
   }
 
   def downloadFile(command:Command[Json])(implicit config:DefaultConfig): IO[Unit] ={

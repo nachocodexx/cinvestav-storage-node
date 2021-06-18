@@ -7,6 +7,9 @@ import mx.cinvestav.commons.payloads
 import mx.cinvestav.commons.commands.Identifiers
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.utils.RabbitMQUtils
+
+import java.util.concurrent.Executors
+import scala.concurrent.ExecutionContext
 //
 import pureconfig.generic.auto._
 import pureconfig.ConfigSource
@@ -25,6 +28,20 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val testEncoder:Encoder[Testing] =deriveEncoder
   implicit val okEncoder:Encoder[payloads.Ok] =deriveEncoder
   implicit val electionEncoder:Encoder[payloads.Election] =deriveEncoder
+  test("Concurrency"){
+//    val es = Executors.newScheduledThreadPool(10)
+//    val ec = ExecutionContext.fromExecutorService(es)
+    for {
+       _          <- IO.println("EXAMPLE")
+       wait5Secs  = IO.sleep(5 seconds)
+       wait1Sec   = IO.sleep(1 seconds)
+       es         <- Executors.newScheduledThreadPool(10).pure[IO]
+       threadPool <- ExecutionContext.fromExecutorService(es).pure[IO]
+       f0         <- (wait5Secs *> IO.println("HELLO WORLD")).start
+       f1         <- (wait1Sec *> IO.println("HELLO WORLD")).startOn(threadPool)
+      _          <- IO.sleep(100 seconds)
+    } yield ()
+  }
   test("Json"){
     val t0 = Testing(0)
     IO.println(t0).flatMap{ _ =>
