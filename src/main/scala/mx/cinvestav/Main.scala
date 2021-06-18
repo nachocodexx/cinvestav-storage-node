@@ -8,6 +8,7 @@ import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import mx.cinvestav.utils.RabbitMQUtils.dynamicRabbitMQConfig
+import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 //
 import cats.effect.{ExitCode, IO, IOApp}
@@ -26,10 +27,9 @@ import mx.cinvestav.commons.commands.Identifiers
 import io.circe._,io.circe.generic.auto._,io.circe.parser._,io.circe.syntax._
 
 object Main extends IOApp{
-//  type NodeState =Map[String,Any]
-  implicit val config: DefaultConfig  = ConfigSource.default.loadOrThrow[DefaultConfig]
-  val rabbitMQConfig: Fs2RabbitConfig = dynamicRabbitMQConfig(config.rabbitmq)
-  implicit val unsafeLogger = Slf4jLogger.getLogger[IO]
+  implicit val config: DefaultConfig                       = ConfigSource.default.loadOrThrow[DefaultConfig]
+  val rabbitMQConfig: Fs2RabbitConfig                      = dynamicRabbitMQConfig(config.rabbitmq)
+  implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
   def program(queueName:String=config.nodeId,state:Ref[IO,NodeState])(implicit utils: RabbitMQUtils[IO]):IO[Unit] =
     for {
@@ -47,7 +47,7 @@ object Main extends IOApp{
               CommandHandler.startHeartbeat(command,state)
             case Identifiers.STOP_HEARTBEAT =>
               CommandHandler.stopHeartbeat(command,state)
-            case _ => IO.println("UNKNOWN COMMAND")
+            case _ => IO.println("UNKNOWN_COMMAND")
           }
       }
       .compile.drain
@@ -59,30 +59,30 @@ object Main extends IOApp{
   override def run(args: List[String]): IO[ExitCode] = {
     RabbitMQUtils.init[IO](rabbitMQConfig){ implicit utils=>
         for {
+          _               <- Logger[IO].debug(config.toString)
+          _               <- Logger[IO].debug(s"STORAGE NODE[${config.nodeId}] is up and running 🚀")
           heartbeatSignal <- SignallingRef[IO,Boolean](false)
-          _initState <- NodeState(
+          _initState      <- NodeState(
             status = status.Up,
             heartbeatSignal = heartbeatSignal,
             loadBalancer =  balancer.LoadBalancer(config.loadBalancer),
             replicationFactor =  config.replicationFactor,
             storagesNodes =  config.storageNodes
           ).pure[IO]
-          state              <- IO.ref(_initState)
-          //          HEARTBEAT
+          state           <- IO.ref(_initState)
           //        MAIN PROGRAM
-          //          initState          <- initStateIO()
-          mainQueueName          <- IO.pure(s"${config.poolId}-${config.nodeId}")
-          _                  <- utils.createQueue(
+          mainQueueName   <- IO.pure(s"${config.poolId}-${config.nodeId}")
+          _               <- utils.createQueue(
                 queueName    = mainQueueName,
                 exchangeName =  config.poolId,
                 exchangeType = ExchangeType.Topic,
                 routingKey   =  s"${config.poolId}.${config.nodeId}.default"
           )
-          _                  <- utils.bindQueue(
+          _               <- utils.bindQueue(
             queueName    = mainQueueName,
             exchangeName = config.poolId,
             routingKey   = s"${config.poolId}.#.config")
-          //          state              <- IO.ref(initState)
+          _                  <- Logger[IO].debug("START")
           _                  <- program(mainQueueName,state)
         } yield ()
       }

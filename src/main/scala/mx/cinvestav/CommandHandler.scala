@@ -2,13 +2,18 @@ package mx.cinvestav
 
 import cats.implicits._
 import cats.effect.{IO, Ref}
+//
 import dev.profunktor.fs2rabbit.model.ExchangeType
-import mx.cinvestav.domain.{NodeState, Payloads}
 import io.circe.generic.semiauto.deriveDecoder
 import io.circe.{Decoder, Json}
+//
+import mx.cinvestav.domain.{NodeState, Payloads}
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Payloads.UpdateReplicationFactor
+import mx.cinvestav.commons.payloads
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
+import mx.cinvestav.commons.commands.Identifiers
+//
 import org.typelevel.log4cats.Logger
 import mx.cinvestav.commons.balancer
 //
@@ -19,29 +24,45 @@ object CommandHandler {
   implicit val downloadFilePayloadDecoder:Decoder[Payloads.DownloadFilePayload] = deriveDecoder
   implicit val updateReplicationFactorPayloadDecoder:Decoder[Payloads.UpdateReplicationFactor] = deriveDecoder
   implicit val uploadFilePayloadDecoder:Decoder[Payloads.UploadFile] = deriveDecoder
+  implicit val startHeartbeatPayloadDecoder:Decoder[payloads.StartHeartbeat] = deriveDecoder
+  implicit val stopHeartbeatPayloadDecoder:Decoder[payloads.StopHeartbeat] = deriveDecoder
 
   def stopHeartbeat(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],
-                                                                    config: DefaultConfig) = for {
-    _ <- IO.println("STOP HEART! </3")
-    signal <- state.get.map(_.heartbeatSignal)
-    _      <- signal.set(true)
-    _      <- signal.set(false)
-  } yield ()
-  def startHeartbeat(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],config:DefaultConfig) =
-    for {
-      _               <- IO.println("START HEARTBEAT")
-      heartbeatSignal <- state.get.map(_.heartbeatSignal)
-      _               <- heartbeatSignal.set(false)
-      heartbeatQueue  <- s"${config.poolId}-heartbeat".pure[IO]
-      heartbeatRk     <- s"${config.poolId}.heartbeat".pure[IO]
-      _               <- utils.createQueue(heartbeatQueue,config.poolId,ExchangeType.Topic,heartbeatRk)
-      //        HEARTBEAT PUBLISHER
-      heartbeatPublisher <- utils.createPublisher(config.poolId,heartbeatRk)
-      _                  <- utils
-        .publishEvery(Helpers.heartbeat(_,heartbeatPublisher),config.heartbeatTime seconds)
-        .interruptWhen(heartbeatSignal)
-        .compile.drain.start
-    } yield ()
+                                                                    config: DefaultConfig,logger: Logger[IO]): IO[Unit] = {
+    command.payload.as[payloads.StopHeartbeat] match {
+      case Left(e) =>
+        Logger[IO].error(e.getMessage())
+      case Right(payload) =>
+        for {
+          _      <- Logger[IO].debug(Identifiers.STOP_HEARTBEAT+s",${payload.id},${payload.nodeId}")
+          signal <- state.get.map(_.heartbeatSignal)
+          _      <- signal.set(true)
+          _      <- signal.set(false)
+        } yield ()
+    }
+  }
+
+  def startHeartbeat(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],
+                                                                     config:DefaultConfig,logger: Logger[IO])
+  : IO[Unit] = command.payload.as[payloads.StartHeartbeat] match {
+    case Left(value) =>
+      Logger[IO].error(value.getMessage())
+    case Right(payload) =>
+      for {
+        _               <- Logger[IO].debug(Identifiers.START_HEARTBEAT+s",${payload.id},${payload.nodeId}")
+        heartbeatSignal <- state.get.map(_.heartbeatSignal)
+        _               <- heartbeatSignal.set(false)
+        heartbeatQueue  <- s"${config.poolId}-heartbeat".pure[IO]
+        heartbeatRk     <- s"${config.poolId}.heartbeat".pure[IO]
+        _               <- utils.createQueue(heartbeatQueue,config.poolId,ExchangeType.Topic,heartbeatRk)
+        //        HEARTBEAT PUBLISHER
+        heartbeatPublisher <- utils.createPublisher(config.poolId,heartbeatRk)
+        _                  <- utils
+          .publishEvery(Helpers.heartbeat(_,heartbeatPublisher),config.heartbeatTime seconds)
+          .interruptWhen(heartbeatSignal)
+          .compile.drain.start
+      } yield ()
+  }
 
   def updateReplicationFactor(command: Command[Json],state:Ref[IO,NodeState]): IO[Unit] = {
     command.payload
