@@ -15,7 +15,7 @@
     <appender name="FILE" class="ch.qos.logback.core.FileAppender">
         <!-- use the previously created timestamp to create a uniquely
              named log file -->
-        <file>${LOG_PATH}/log-${bySecond}.txt</file>
+        <file>${LOG_PATH}/${NODE_ID}-${bySecond}.txt</file>
         <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
             <layout class="mx.cinvestav.log.MySampleLayout" >
                 <nodeId>${NODE_ID}</nodeId>

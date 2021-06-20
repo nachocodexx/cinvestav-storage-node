@@ -9,6 +9,7 @@ case class NodeState(
                     replicationFactor:Int,
 //                    loadBalancer:String,
                     heartbeatSignal:SignallingRef[IO,Boolean],
+                    isBeating:Boolean=false,
                     storagesNodes:List[String] = List.empty[String],
                     loadBalancer:balancer.LoadBalancer
                     )

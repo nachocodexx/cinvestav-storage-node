@@ -2,6 +2,7 @@ package mx.cinvestav
 
 import cats.implicits._
 import cats.effect.{IO, Ref}
+import fs2.concurrent.SignallingRef
 //
 import dev.profunktor.fs2rabbit.model.ExchangeType
 import io.circe.generic.semiauto.deriveDecoder
@@ -34,33 +35,29 @@ object CommandHandler {
         Logger[IO].error(e.getMessage())
       case Right(payload) =>
         for {
-          _      <- Logger[IO].debug(Identifiers.STOP_HEARTBEAT+s",${payload.id},${payload.nodeId}")
-          signal <- state.get.map(_.heartbeatSignal)
-          _      <- signal.set(true)
-          _      <- signal.set(false)
+          _               <- Logger[IO].debug(Identifiers.STOP_HEARTBEAT+s" ${payload.id} ${payload.nodeId} ${payload
+            .fromNodeId}")
+          currentState    <- state.getAndUpdate(_.copy(isBeating = false))
+          heartbeatSignal <- currentState.heartbeatSignal.pure[IO]
+          _               <- heartbeatSignal.set(true)
+          _               <- heartbeatSignal.set(false)
         } yield ()
     }
   }
 
+
   def startHeartbeat(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],
-                                                                     config:DefaultConfig,logger: Logger[IO])
-  : IO[Unit] = command.payload.as[payloads.StartHeartbeat] match {
+                                                                     config:DefaultConfig,logger: Logger[IO]): IO[Unit] = command.payload.as[payloads.StartHeartbeat] match {
     case Left(value) =>
       Logger[IO].error(value.getMessage())
     case Right(payload) =>
       for {
-        _               <- Logger[IO].debug(Identifiers.START_HEARTBEAT+s",${payload.id},${payload.nodeId}")
-        heartbeatSignal <- state.get.map(_.heartbeatSignal)
-        _               <- heartbeatSignal.set(false)
-        heartbeatQueue  <- s"${config.poolId}-heartbeat".pure[IO]
-        heartbeatRk     <- s"${config.poolId}.heartbeat".pure[IO]
-        _               <- utils.createQueue(heartbeatQueue,config.poolId,ExchangeType.Topic,heartbeatRk)
-        //        HEARTBEAT PUBLISHER
-        heartbeatPublisher <- utils.createPublisher(config.poolId,heartbeatRk)
-        _                  <- utils
-          .publishEvery(Helpers.heartbeat(_,heartbeatPublisher),config.heartbeatTime seconds)
-          .interruptWhen(heartbeatSignal)
-          .compile.drain.start
+        _               <- Logger[IO].debug(Identifiers.START_HEARTBEAT+s" ${payload.id} ${payload.nodeId} ${payload.fromNodeId}")
+        currentState    <- state.get
+        heartbeatSignal <- currentState.heartbeatSignal.pure[IO]
+        isBeating       <- currentState.isBeating.pure[IO]
+        _               <- if(isBeating) Logger[IO].debug("HEARTBEAT_SKIPPED")
+                          else Helpers._startHeart(heartbeatSignal) *> state.update(_.copy(isBeating=true))
       } yield ()
   }
 
