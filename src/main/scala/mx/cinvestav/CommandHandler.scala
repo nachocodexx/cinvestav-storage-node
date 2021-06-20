@@ -1,8 +1,23 @@
 package mx.cinvestav
-
+//{
+//  "commandId":"UPLOAD_FILE",
+//  "payload":{
+//  "id":"0",
+//  "fileId":"f00",
+//  "userId":"u00",
+//  "filename":"01",
+//  "extension":"jpg",
+//  "url":"http://localhost:6666",
+//  "replicas":2,
+//  "nodes":[]
+//}
+//}
+import cats.data.EitherT
 import cats.implicits._
 import cats.effect.{IO, Ref}
 import fs2.concurrent.SignallingRef
+import mx.cinvestav.domain.Errors.Failure
+import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, Replica}
 //
 import dev.profunktor.fs2rabbit.model.ExchangeType
 import io.circe.generic.semiauto.deriveDecoder
@@ -22,7 +37,7 @@ import scala.concurrent.duration._
 import scala.language.postfixOps
 
 object CommandHandler {
-  implicit val downloadFilePayloadDecoder:Decoder[Payloads.DownloadFilePayload] = deriveDecoder
+  implicit val downloadFilePayloadDecoder:Decoder[Payloads.DownloadFile] = deriveDecoder
   implicit val updateReplicationFactorPayloadDecoder:Decoder[Payloads.UpdateReplicationFactor] = deriveDecoder
   implicit val uploadFilePayloadDecoder:Decoder[Payloads.UploadFile] = deriveDecoder
   implicit val startHeartbeatPayloadDecoder:Decoder[payloads.StartHeartbeat] = deriveDecoder
@@ -47,7 +62,8 @@ object CommandHandler {
 
 
   def startHeartbeat(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],
-                                                                     config:DefaultConfig,logger: Logger[IO]): IO[Unit] = command.payload.as[payloads.StartHeartbeat] match {
+                                                                     H:Helpers,logger: Logger[IO]): IO[Unit] = command
+    .payload.as[payloads.StartHeartbeat] match {
     case Left(value) =>
       Logger[IO].error(value.getMessage())
     case Right(payload) =>
@@ -57,7 +73,7 @@ object CommandHandler {
         heartbeatSignal <- currentState.heartbeatSignal.pure[IO]
         isBeating       <- currentState.isBeating.pure[IO]
         _               <- if(isBeating) Logger[IO].debug("HEARTBEAT_SKIPPED")
-                          else Helpers._startHeart(heartbeatSignal) *> state.update(_.copy(isBeating=true))
+                          else H._startHeart(heartbeatSignal) *> state.update(_.copy(isBeating=true))
       } yield ()
   }
 
@@ -80,29 +96,80 @@ object CommandHandler {
 //      .flatMap(_=>IO.println(command.envelope))
   }
 
-  def uploadFile(command: Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO],config: DefaultConfig,
+  def uploadFile(command: Command[Json],state:Ref[IO,NodeState])(implicit H:Helpers,config: DefaultConfig,
                                                 logger:Logger[IO]): IO[Unit] = command
     .payload.as[Payloads.UploadFile] match {
     case Left(e) =>
       IO.println(e.getMessage())
     case Right(payload) =>
-      for {
-        currentState <- state.get
-        _        <- Logger[IO].debug(s"UPLOADING FILE  - DOWNLOAD FROM ${payload.url}")
-        lb       <-  currentState.loadBalancer.pure[IO]
-        replicas <- lb.balance(currentState.storagesNodes).pure[IO]
-        _        <- Logger[IO].debug(s"REPLICAS: ${replicas}")
-//        _ <-
-      } yield ( )
+      val getPayloadLog =
+        CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} ${payload.replicas} " +
+          s"${payload
+            .nodes.mkString(",")}"
+      val result:EitherT[IO,Failure,FileMetadata] = for {
+        _            <- Logger.eitherTLogger[IO,Failure].debug(getPayloadLog)
+        file         <- H.saveFileE(payload)
+        currentState <- EitherT(state.get.map(_.asRight[Failure]))
+        maybeMeta    <- EitherT.fromEither[IO](currentState.metadata.get(payload.fileId).asRight[Failure])
+        metadata     <- H.createFileMetadataE(maybeMeta,payload,file)
+//        _            <- Logger.eitherTLogger[IO,Failure].debug(metadata.toString)
+//        _            <- EitherT(Logger[IO].debug(metadata.toString).map(_.asRight[Throwable]))
+      } yield metadata
+      result.value.flatMap {
+        case Left(e) => e match {
+          case Errors.DuplicatedReplica(fileId) =>
+            Logger[IO].error(s"DUPLICATED_REPLICA $fileId")
+          case Errors.FileNotFound(filename) =>
+            Logger[IO].error(s"FILE_NOT_FOUND $filename")
+          case _ =>
+            Logger[IO].error("UNKNOWN_ERROR")
+        }
+        case Right(metadata) =>
+                for {
+                  currentState   <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
+                  lb             <-  currentState.loadBalancer.pure[IO]
+                  storageNodes   <- currentState.storagesNodes.pure[IO]
+                  availableNodes <- storageNodes.toSet.diff(payload.nodes.toSet).toList.pure[IO]
+                  _              <- Logger[IO].debug(availableNodes.mkString(","))
+                  nextNodeId     <- lb.balance(availableNodes).pure[IO]
+//                  _              <- Logger[IO].debug(s"SEND_UPLOAD_FILE => $nextNodeId")
+                  _              <- if(payload.replicas==0) Logger[IO].debug(s"REPLICATION_FINISHED ${payload.id}")
+                                  else H.continueReplication(nextNodeId,payload)
+                } yield ( )
+
+      }
+//      H.saveFileE(payload.filename,url = s"${payload.url}/${payload.filename}.${payload.extension}")
+//      .value.flatMap {
+//        case Left(e) =>
+//          Logger[IO].error(e.getMessage)
+//        case Right(file) =>
+
+//              for {
+//                currentState  <- state.get
+//                previousMeta  <- currentState.metadata.get(payload.fileId).pure[IO]
+//                fileMeta      <- H.createFileMetadata(previousMeta,payload,file)
+//                _             <- state.update(s=>s.copy(metadata = s.metadata+(payload.fileId->fileMeta)))
+//                _             <- Logger[IO].debug(fileMeta.toString)
+//                _             <- Logger[IO].debug(getPayloadLog)
+//                lb            <-  currentState.loadBalancer.pure[IO]
+//                storageNodes  <- currentState.storagesNodes.pure[IO]
+//                availableNodes<- storageNodes.toSet.diff(payload.nodes.toSet).toList.pure[IO]
+//                _             <- Logger[IO].debug(availableNodes.mkString(","))
+//                nextNodeId    <- lb.balance(availableNodes).pure[IO]
+//                _             <- Logger[IO].debug(s"SEND_UPLOAD_FILE => $nextNodeId")
+//                _             <- if(payload.replicas==0) Logger[IO].debug("REPLICATION_FINISHED")
+//                                else H.continueReplication(nextNodeId,payload)
+//              } yield ( )
+//      }
   }
 
-  def downloadFile(command:Command[Json])(implicit config:DefaultConfig): IO[Unit] ={
-    val payload = command.payload.as[Payloads.DownloadFilePayload]
+  def downloadFile(command:Command[Json])(implicit H:Helpers): IO[Unit] ={
+    val payload = command.payload.as[Payloads.DownloadFile]
     payload match {
       case Left(e) =>
         IO.println(e.getMessage())
       case Right(payload) =>
-        Helpers.saveFile(payload.fileId,payload.url) *> IO.unit
+        H.saveFile(payload.fileId,payload.url) *> IO.unit
     }
   }
 

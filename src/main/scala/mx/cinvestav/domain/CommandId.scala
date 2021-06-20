@@ -9,4 +9,5 @@ object CommandId {
   final val HEARTBEAT = "NODE_HEARTBEAT"
   final val START_HEARTBEAT ="START_HEARTBEAT"
   final val STOP_HEARTBEAT = "STOP_HEARTBEAT"
+//  final val COLLOCATION = "COLLOCATION"
 }

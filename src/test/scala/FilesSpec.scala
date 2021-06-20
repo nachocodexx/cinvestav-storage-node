@@ -52,9 +52,8 @@ class FilesSpec extends munit.CatsEffectSuite {
     }.flatMap(IO.println)
   }
   test("Basics".ignore) {
-    Helpers
-      .saveFile("f-00.gif","http://localhost:6666/00.gif")
-      .flatMap(IO.println)
+//    Helpers().saveFile("f-00.gif","http://localhost:6666/00.gif")
+//      .flatMap(IO.println)
   }
   test("RabbitMQ"){
     RabbitMQUtils.init[IO](RabbitMQUtils.dynamicRabbitMQConfig(config.rabbitmq)) { implicit utils =>
@@ -68,7 +67,7 @@ class FilesSpec extends munit.CatsEffectSuite {
               for {
                 pub <- utils.createPublisher(config.poolId,s"${config.poolId}.cs-xxxx.default")
                 cmd <- CommandData[Json](Identifiers.COORDINATOR,payloads.Coordinator("sn-yyyy","cs-yyyy").asJson).pure[IO ]
-                okcmd <- CommandData[Json](Identifiers.OK,payloads.Ok(0,"cs-yyyy").asJson).pure[IO]
+                okcmd <- CommandData[Json](Identifiers.OK,payloads.Ok("cs-yyyy").asJson).pure[IO]
                 _ <- pub(cmd.asJson.noSpaces)
                 _ <- pub(okcmd.asJson.noSpaces)
                 _ <- IO.println("ELECTIONS!!!")

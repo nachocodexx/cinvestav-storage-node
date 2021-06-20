@@ -31,7 +31,7 @@ object Main extends IOApp{
   val rabbitMQConfig: Fs2RabbitConfig                      = dynamicRabbitMQConfig(config.rabbitmq)
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
-  def program(queueName:String=config.nodeId,state:Ref[IO,NodeState])(implicit utils: RabbitMQUtils[IO]):IO[Unit] =
+  def program(queueName:String=config.nodeId,state:Ref[IO,NodeState])(implicit utils: RabbitMQUtils[IO],H:Helpers):IO[Unit] =
     for {
     _ <- utils.consumeJson(queueName)
       .evalMap {
@@ -47,7 +47,8 @@ object Main extends IOApp{
               CommandHandler.startHeartbeat(command,state)
             case Identifiers.STOP_HEARTBEAT =>
               CommandHandler.stopHeartbeat(command,state)
-            case _ => IO.println("UNKNOWN_COMMAND")
+            case _ => state.get.map(_.metadata).flatMap(IO.println)
+//              IO.println("UNKNOWN_COMMAND")
           }
       }
       .compile.drain
@@ -83,7 +84,8 @@ object Main extends IOApp{
             exchangeName = config.poolId,
             routingKey   = s"${config.poolId}.#.config")
           _                  <- Logger[IO].debug("START")
-          _                  <- program(mainQueueName,state)
+          helpers            = Helpers()
+          _                  <- program(mainQueueName,state)(utils,helpers)
         } yield ()
       }
     }.as(ExitCode.Success)

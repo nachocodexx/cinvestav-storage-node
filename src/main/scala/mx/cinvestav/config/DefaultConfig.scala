@@ -11,5 +11,6 @@ case class DefaultConfig(
 //                          priority: Int,
                           storageNodes:List[String],
                           heartbeatTime:Int,
-                          rabbitmq: RabbitMQConfig
+                          rabbitmq: RabbitMQConfig,
+                          port:Int
                         )
