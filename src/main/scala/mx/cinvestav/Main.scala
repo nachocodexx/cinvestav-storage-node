@@ -10,6 +10,8 @@ import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import mx.cinvestav.utils.RabbitMQUtils.dynamicRabbitMQConfig
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+import java.net.InetAddress
 //
 import cats.effect.{ExitCode, IO, IOApp}
 //
@@ -37,10 +39,14 @@ object Main extends IOApp{
       .evalMap {
         command =>
           command.commandId match {
+            case Identifiers.NEW_COORDINATOR =>
+              CommandHandler.newCoordinator(command,state)
             case CommandId.DOWNLOAD_FILE =>
-              CommandHandler.downloadFile(command)
+              CommandHandler.downloadFile(command,state)
             case CommandId.UPLOAD_FILE =>
               CommandHandler.uploadFile(command,state)
+            case CommandId.REPLICATION =>
+              CommandHandler.replication(command,state)
             case CommandId.UPDATE_REPLICATION_FACTOR =>
               CommandHandler.updateReplicationFactor(command, state)
             case Identifiers.START_HEARTBEAT =>
@@ -60,15 +66,17 @@ object Main extends IOApp{
   override def run(args: List[String]): IO[ExitCode] = {
     RabbitMQUtils.init[IO](rabbitMQConfig){ implicit utils=>
         for {
-          _               <- Logger[IO].debug(config.toString)
-          _               <- Logger[IO].debug(s"STORAGE NODE[${config.nodeId}] is up and running 🚀")
+          _               <- Logger[IO].trace(config.toString)
+          _               <- Logger[IO].trace(s"STORAGE NODE[${config.nodeId}] is up and running 🚀")
           heartbeatSignal <- SignallingRef[IO,Boolean](false)
           _initState      <- NodeState(
-            status = status.Up,
-            heartbeatSignal = heartbeatSignal,
-            loadBalancer =  balancer.LoadBalancer(config.loadBalancer),
-            replicationFactor =  config.replicationFactor,
-            storagesNodes =  config.storageNodes
+            status             = status.Up,
+            heartbeatSignal    = heartbeatSignal,
+            loadBalancer       = balancer.LoadBalancer(config.loadBalancer),
+            replicationFactor  = config.replicationFactor,
+            storagesNodes      = config.storageNodes,
+            ip                 = InetAddress.getLocalHost.getHostAddress,
+            availableResources = config.storageNodes.length+1
           ).pure[IO]
           state           <- IO.ref(_initState)
           //        MAIN PROGRAM

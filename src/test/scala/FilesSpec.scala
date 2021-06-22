@@ -1,12 +1,17 @@
+import cats.data.EitherT
 import cats.effect.IO
 import cats.implicits._
 import io.circe.Json
 import mx.cinvestav.Helpers
 import mx.cinvestav.commons.commands.CommandData
-import mx.cinvestav.commons.payloads
+import mx.cinvestav.commons.{balancer, payloads}
 import mx.cinvestav.commons.commands.Identifiers
 import mx.cinvestav.config.DefaultConfig
+import mx.cinvestav.domain.{CommandId, Payloads}
+import mx.cinvestav.domain.Errors.Failure
 import mx.cinvestav.utils.RabbitMQUtils
+import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 import java.util.concurrent.Executors
 import scala.concurrent.ExecutionContext
@@ -16,6 +21,7 @@ import pureconfig.ConfigSource
 import io.circe._,io.circe.generic.auto._,io.circe.generic.semiauto._ ,io.circe.syntax._,io.circe.parser._
 import scala.concurrent.duration._
 import scala.language.postfixOps
+import fs2.Stream
 
 class FilesSpec extends munit.CatsEffectSuite {
   implicit val config = ConfigSource.default.loadOrThrow[DefaultConfig]
@@ -28,7 +34,64 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val testEncoder:Encoder[Testing] =deriveEncoder
   implicit val okEncoder:Encoder[payloads.Ok] =deriveEncoder
   implicit val electionEncoder:Encoder[payloads.Election] =deriveEncoder
-  test("Concurrency"){
+  val rabbitMQConfig = RabbitMQUtils.dynamicRabbitMQConfig(config.rabbitmq)
+  implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
+  case class Command(command:Json)
+
+  test("Workload") {
+
+    RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
+      val helpers = Helpers()
+      val bullies = List("cs-0","cs-1","cs-2")
+//      val bullies = List("cs-0","cs-1")
+      val lb = balancer.LoadBalancer(config.loadBalancer)
+      Stream.iterate(0)(_+1)
+        .covary[IO]
+        .evalMap{ i =>
+          val node = lb.balance(bullies)
+            val uploadPayload = Payloads.UploadFile(s"op-$i",s"file_$i",s"$i","pdf","user_00","http://10.0.0.11", 2)
+            val uploadCmd = CommandData[Json](CommandId.UPLOAD_FILE,uploadPayload.asJson)
+            val cmd = CommandData[Json]("RUN",payload = Command(uploadCmd.asJson).asJson)
+          for {
+            _         <-Logger[IO].debug(s"SEND file $i.pdf to $node")
+            publisher <- helpers.fromNodeIdToPublisher(node,s"${config.poolId}.$node.default")
+            _         <- publisher.publish(cmd.asJson.noSpaces)
+          } yield ()
+        }
+        .metered(300 milliseconds)
+        .take(20)
+        .compile.drain
+//      Logger[IO].debug("INIT")
+    }
+  }
+
+  test("Compression".ignore){
+    RabbitMQUtils.init[IO](rabbitMQConfig){ implicit  utils =>
+      val helpers = Helpers()
+      val app = for {
+        stats <-EitherT.fromEither[IO](
+          helpers.compressE(
+            src = "/home/nacho/Programming/Scala/storage-node/target/storage/01",
+            destination = "/home/nacho/Programming/Scala/storage-node/target/storage")
+        )
+        stats01 <- EitherT.fromEither[IO](helpers.decompressE
+        ("/home/nacho/Programming/Scala/storage-node/target/storage/01.lz4",
+          "/home/nacho/Programming/Scala/storage-node/target/storage/decompress"))
+        _     <- Logger.eitherTLogger[IO,Failure].debug(stats.toString)
+        _     <- Logger.eitherTLogger[IO,Failure].debug(stats01.toString)
+      } yield ( )
+      app.value.flatMap {
+        case Left(value) =>
+          Logger[IO].debug(value.toString)
+        case Right(value) =>
+          Logger[IO].debug("SUCCESS")
+      }
+//        Logger[IO].debug("DONE!")
+    }
+
+  }
+
+  test("Concurrency".ignore){
 //    val es = Executors.newScheduledThreadPool(10)
 //    val ec = ExecutionContext.fromExecutorService(es)
     for {
@@ -42,7 +105,7 @@ class FilesSpec extends munit.CatsEffectSuite {
       _          <- IO.sleep(100 seconds)
     } yield ()
   }
-  test("Json"){
+  test("Json".ignore){
     val t0 = Testing(0)
     IO.println(t0).flatMap{ _ =>
       val json = t0.asJson
@@ -55,8 +118,8 @@ class FilesSpec extends munit.CatsEffectSuite {
 //    Helpers().saveFile("f-00.gif","http://localhost:6666/00.gif")
 //      .flatMap(IO.println)
   }
-  test("RabbitMQ"){
-    RabbitMQUtils.init[IO](RabbitMQUtils.dynamicRabbitMQConfig(config.rabbitmq)) { implicit utils =>
+  test("RabbitMQ".ignore){
+    RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
       val app = for {
         _ <- IO.println("STARTING CONSUME!")
         _ <- utils.consumeJson("pool-xxxx-cs-yyyy")

@@ -1,0 +1,41 @@
+{
+  "commandId":"UPLOAD_FILE",
+    "payload":{
+      "id":"0",
+      "fileId":"f00",
+      "userId":"u00",
+      "filename":"01",
+      "extension":"jpg",
+      "url":"http://10.0.0.11",
+      "replicas":0,
+      "nodes":[]
+  }
+}
+{
+  "commandId":"DOWNLOAD_FILE",
+    "payload":{
+      "fileId":"f00",
+      "replyTo":"client-00"
+  }
+}
+
+
+{
+  "commandId":"RUN",
+  "payload":{
+     "command":{
+              "commandId":"UPLOAD_FILE",
+                "payload":{
+                  "id":"0",
+                  "fileId":"f00",
+                  "userId":"u00",
+                  "filename":"1",
+                  "extension":"pdf",
+                  "url":"http://10.0.0.11",
+                  "replication_factor":2,
+                  "compressionAlgorithm":"lz4"
+              }
+      }
+  }
+
+}
