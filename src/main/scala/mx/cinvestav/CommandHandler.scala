@@ -35,7 +35,19 @@ object CommandHandler {
   implicit val stopHeartbeatPayloadDecoder:Decoder[payloads.StopHeartbeat] = deriveDecoder
   implicit val replicationPayloadDecoder:Decoder[Payloads.Replication] = deriveDecoder
   implicit val newCoordinatorPayloadDecoder:Decoder[payloads.NewCoordinator] = deriveDecoder
+  implicit val newCoordinatorV2PayloadDecoder:Decoder[payloads.NewCoordinatorV2] = deriveDecoder
 
+  def newCoordinatorV2(command: Command[Json],state:Ref[IO,NodeState])(implicit logger: Logger[IO]): IO[Unit] =
+    command.payload.as[payloads.NewCoordinatorV2] match {
+    case Left(value) =>
+      Logger[IO].error(value.getMessage())
+    case Right(payload) =>for {
+      _ <- Logger[IO].debug(s"NEW_COORDINATOR ${payload.prev} ${payload.current}")
+      _ <- state.update(s =>
+        s.copy(availableResources = s.availableResources-1,storagesNodes = s.storagesNodes.toSet.diff(payload.prev.toSet).toList )
+      )
+    } yield ()
+  }
 
   def newCoordinator(command: Command[Json],state:Ref[IO,NodeState])(implicit logger: Logger[IO]): IO[Unit] = command.payload
     .as[payloads.NewCoordinator] match {
@@ -58,16 +70,17 @@ object CommandHandler {
     case Right(payload) => for {
       currentState <- state.get
       _                   <- Logger[IO].debug(CommandId.REPLICATION+s" ${payload.id} ${payload.fileId}")
+      replicationCompletedLog =Logger[IO].debug (s"REPLICATION_COMPLETED ${payload.id}")
+
       continueReplication <- (payload.nodes.length < payload.replication_factor).pure[IO]
       replicationFn = for {
-//        _      <- Logger[IO].debug(s"CONTINUE_REPLICATION ${payload.id}")
         result <- H.saveReplica(payload).value
         _      <- result match {
           case Left(e) => Logger[IO].error(e.toString)
           case Right(_) => for {
             _ <-Logger[IO].debug(s"REPLICA_SAVED_SUCCESSFULLY ${payload.id}")
             newPayload = payload.copy(url =  s"http://${currentState.ip}",nodes = payload.nodes:+config.nodeId)
-            _<- if(continueReplication) H.replicate(currentState, newPayload) else Logger[IO].debug (s"REPLICATION_COMPLETED ${payload.id}")
+            _<- if(continueReplication) H.replicate(currentState, newPayload) else replicationCompletedLog
           } yield ()
         }
 //        _ <- H.replicate(currentState,payload)
@@ -138,12 +151,6 @@ object CommandHandler {
     if(maybeMeta.isDefined) EitherT.fromEither[IO](Left(DuplicatedReplica(payload.fileId)))
     else for {
       file             <- H.saveFileE(payload)
-//      doCompression = for {
-//
-//      } yield ()
-//      _                <- if(payload.compression)
-//        Logger.eitherTLogger[IO,Failure].debug("")
-//      else Logger.eitherTLogger[IO,Failure].debug("")
       _                <-Logger.eitherTLogger[IO,Failure].debug(s"COMPRESSION_INIT ${payload.id}")
       cs               <- H.compressEIO(file.getPath,s"${config.storagePath}")
       _                <- Logger.eitherTLogger[IO,Failure]
@@ -157,10 +164,9 @@ object CommandHandler {
     case Left(e) =>
       IO.println(e.getMessage())
     case Right(payload) =>
-      val getPayloadLog =
-        CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} ${payload.replication_factor}"
+      val uploadLog = CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} ${payload.replication_factor}"
       val result:EitherT[IO,Failure,FileMetadata] = for {
-        _                <- Logger.eitherTLogger[IO,Failure].debug(getPayloadLog)
+        _                <- Logger.eitherTLogger[IO,Failure].debug(uploadLog)
         currentState     <- EitherT(state.get.map(_.asRight[Failure]))
 
         metadata = for {

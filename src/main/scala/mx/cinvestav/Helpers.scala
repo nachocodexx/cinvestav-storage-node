@@ -73,7 +73,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 
 
   def replicate(currentState:NodeState,payload: Payloads.Replication): IO[Unit] = for {
-    _              <- Logger[IO].debug(CommandId.REPLICATION+s" ${payload.id}")
+//    _              <- Logger[IO].debug(CommandId.REPLICATION+s" ${payload.id}")
     lb             <-  currentState.loadBalancer.pure[IO]
     storageNodes   <- currentState.storagesNodes.pure[IO]
     availableNodes <- storageNodes.toSet.diff(

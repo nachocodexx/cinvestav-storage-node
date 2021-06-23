@@ -41,6 +41,8 @@ object Main extends IOApp{
           command.commandId match {
             case Identifiers.NEW_COORDINATOR =>
               CommandHandler.newCoordinator(command,state)
+            case Identifiers.NEW_COORDINATOR_V2 =>
+              CommandHandler.newCoordinatorV2(command,state)
             case CommandId.DOWNLOAD_FILE =>
               CommandHandler.downloadFile(command,state)
             case CommandId.UPLOAD_FILE =>

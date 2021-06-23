@@ -13,6 +13,7 @@ import mx.cinvestav.utils.RabbitMQUtils
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+import java.util.UUID
 import java.util.concurrent.Executors
 import scala.concurrent.ExecutionContext
 //
@@ -22,6 +23,8 @@ import io.circe._,io.circe.generic.auto._,io.circe.generic.semiauto._ ,io.circe.
 import scala.concurrent.duration._
 import scala.language.postfixOps
 import fs2.Stream
+import scala.sys.process._
+
 
 class FilesSpec extends munit.CatsEffectSuite {
   implicit val config = ConfigSource.default.loadOrThrow[DefaultConfig]
@@ -38,30 +41,52 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
   case class Command(command:Json)
 
+//  test("shell"){
+//    IO.pure(cmd!)
+//      .flatMap(IO.println)
+//  }
+  def workload(bullies:List[String],lb:balancer.LoadBalancer)(implicit H:Helpers): IO[Unit] = Stream.iterate(0)(_+1)
+    .covary[IO]
+    .evalMap{ i =>
+      val node = lb.balance(bullies)
+      val uploadPayload = Payloads.UploadFile(s"op-$i",UUID.randomUUID().toString,s"$i","pdf","user_00","http://10.0.0.11", 2)
+      val uploadCmd = CommandData[Json](CommandId.UPLOAD_FILE,uploadPayload.asJson)
+      val cmd = CommandData[Json]("RUN",payload = Command(uploadCmd.asJson).asJson)
+      for {
+        _         <-Logger[IO].debug(s"SEND file $i.pdf to $node")
+        publisher <- H.fromNodeIdToPublisher(node,s"${config.poolId}.$node.default")
+        _         <- publisher.publish(cmd.asJson.noSpaces)
+      } yield ()
+    }
+    .metered(1000 milliseconds)
+    .take(32)
+    .compile.drain
+
   test("Workload") {
+    val cmdRm =  """echo demonio0 | sudo -S rm /home/nacho/Documents/test/storage/sn-*/*"""
+    val cmd = Seq("/bin/bash","-c",cmdRm)
 
     RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
-      val helpers = Helpers()
-      val bullies = List("cs-0","cs-1","cs-2")
-//      val bullies = List("cs-0","cs-1")
+      implicit val H: Helpers = Helpers()
+      val bullies = List("cs-0","cs-1","cs-2","cs-3","cs-4","cs-5")
       val lb = balancer.LoadBalancer(config.loadBalancer)
+      val MAX_EXPERIMENTS = 50
       Stream.iterate(0)(_+1)
         .covary[IO]
-        .evalMap{ i =>
-          val node = lb.balance(bullies)
-            val uploadPayload = Payloads.UploadFile(s"op-$i",s"file_$i",s"$i","pdf","user_00","http://10.0.0.11", 2)
-            val uploadCmd = CommandData[Json](CommandId.UPLOAD_FILE,uploadPayload.asJson)
-            val cmd = CommandData[Json]("RUN",payload = Command(uploadCmd.asJson).asJson)
+        .evalMap(i=>Logger[IO].debug(s"EXPERIMENT[$i] INIT") *>i.pure[IO])
+        .evalMap{ i=>
           for {
-            _         <-Logger[IO].debug(s"SEND file $i.pdf to $node")
-            publisher <- helpers.fromNodeIdToPublisher(node,s"${config.poolId}.$node.default")
-            _         <- publisher.publish(cmd.asJson.noSpaces)
-          } yield ()
+            _ <- workload(bullies,lb)
+            _ <- IO.pure(cmd!)
+            _ <- Logger[IO].debug("CLEAN FILES DONE")
+          } yield i
         }
-        .metered(300 milliseconds)
-        .take(20)
+        .evalMap(i=>Logger[IO].debug(s"EXPERIMENT[$i] DONE"))
+        .take(MAX_EXPERIMENTS)
+        .metered(1 second)
         .compile.drain
-//      Logger[IO].debug("INIT")
+//      workload(bullies,lb)
+
     }
   }
 
