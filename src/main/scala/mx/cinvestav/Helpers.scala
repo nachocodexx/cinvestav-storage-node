@@ -84,7 +84,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     publisher <- fromNodeIdToPublisher(nodeId,s"${config.poolId}.$nodeId.default")
     cmd       <- CommandData[Json](CommandId.REPLICATION,payload.asJson).pure[IO]
     _         <- publisher.publish(cmd.asJson.noSpaces)
-    _         <- Logger[IO].debug(s"SENT_REPLICATION_CMD ${payload.id} $nodeId")
+    _         <- Logger[IO].debug(s"SENT_REPLICATION_CMD ${payload.id} $nodeId ${payload.experimentId}")
 
   } yield ()
 
@@ -166,26 +166,30 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   }
   def saveFileE(payload:Payloads.UploadFile): EitherT[IO,Failure,File] = {
     for {
-      _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_INIT ${payload.id}")
+      _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_INIT ${payload.id} ${payload.fileId} " +
+        s"${payload.experimentId}")
       completeUrl   <- EitherT.fromEither[IO](s"${payload.url}/${payload.filename}.${payload.extension}".asRight)
       website       =   new URL(completeUrl)
       rbc           <- EitherT.fromEither[IO](newChannelE(payload.filename,website))
       filePath      = s"${config.storagePath}/${payload.fileId}"
       fos           = new FileOutputStream(filePath)
       transferred   <- transferE(payload.filename,fos,rbc)
-      _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_DONE ${payload.id} $transferred")
+      _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_DONE ${payload.id} ${payload
+        .fileId} $transferred ${payload.experimentId}")
       file          <- EitherT.fromEither[IO](Right(new File(filePath)))
     } yield file
   }
   def saveReplica(payload:Payloads.Replication): EitherT[IO, Failure, Unit] = for {
-    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_INIT ${payload.id}")
+    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_INIT ${payload.id} ${payload.fileId} " +
+      s"${payload.experimentId}")
     completeUrl   <- EitherT.fromEither[IO](s"${payload.url}/${payload.fileId}.${payload.extension}".asRight)
     website       =   new URL(completeUrl)
     rbc           <- EitherT.fromEither[IO](newChannelE(payload.fileId,website))
     filePath      = s"${config.storagePath}/${payload.fileId}.${payload.extension}"
     fos           = new FileOutputStream(filePath)
     transferred   <- transferE(payload.fileId,fos,rbc)
-    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_DONE ${payload.id} $transferred")
+    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_DONE ${payload.id} ${payload.fileId} " +
+      s"$transferred ${payload.experimentId}")
 //    file          <- EitherT.fromEither[IO](Right(new File(filePath)))
   } yield ()
 

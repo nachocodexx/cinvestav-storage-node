@@ -69,16 +69,16 @@ object CommandHandler {
       Logger[IO].error(value.getMessage())
     case Right(payload) => for {
       currentState <- state.get
-      _                   <- Logger[IO].debug(CommandId.REPLICATION+s" ${payload.id} ${payload.fileId}")
-      replicationCompletedLog =Logger[IO].debug (s"REPLICATION_COMPLETED ${payload.id}")
+      _                   <- Logger[IO].debug(CommandId.REPLICATION+s" ${payload.id} ${payload.fileId} ${payload.experimentId}")
+      replicationCompletedLog =Logger[IO].debug (s"REPLICATION_COMPLETED ${payload.id} ${payload.experimentId}")
 
-      continueReplication <- (payload.nodes.length < payload.replication_factor).pure[IO]
+      continueReplication <- (payload.nodes.length < payload.replicationFactor).pure[IO]
       replicationFn = for {
         result <- H.saveReplica(payload).value
         _      <- result match {
           case Left(e) => Logger[IO].error(e.toString)
           case Right(_) => for {
-            _ <-Logger[IO].debug(s"REPLICA_SAVED_SUCCESSFULLY ${payload.id}")
+            _ <-Logger[IO].debug(s"REPLICA_SAVED_SUCCESSFULLY ${payload.id} ${payload.experimentId}")
             newPayload = payload.copy(url =  s"http://${currentState.ip}",nodes = payload.nodes:+config.nodeId)
             _<- if(continueReplication) H.replicate(currentState, newPayload) else replicationCompletedLog
           } yield ()
@@ -151,10 +151,12 @@ object CommandHandler {
     if(maybeMeta.isDefined) EitherT.fromEither[IO](Left(DuplicatedReplica(payload.fileId)))
     else for {
       file             <- H.saveFileE(payload)
-      _                <-Logger.eitherTLogger[IO,Failure].debug(s"COMPRESSION_INIT ${payload.id}")
+      _                <-Logger.eitherTLogger[IO,Failure].debug(s"COMPRESSION_INIT ${payload.id} ${payload.fileId} " +
+        s"${payload.experimentId}")
       cs               <- H.compressEIO(file.getPath,s"${config.storagePath}")
       _                <- Logger.eitherTLogger[IO,Failure]
-        .debug(s"COMPRESSION_DONE ${payload.id} ${cs.method} ${cs.millSeconds} ${cs.sizeIn} ${cs.sizeOut} ${cs.mbPerSecond}")
+        .debug(s"COMPRESSION_DONE ${payload.id} ${payload.fileId} ${cs.method} ${cs.millSeconds} ${cs.sizeIn} ${cs
+          .sizeOut} ${cs.mbPerSecond} ${payload.experimentId}")
       metadata         <- H.createFileMetadataE(payload,file)
       _                <- EitherT.fromEither[IO](file.delete().asRight)
     } yield  metadata
@@ -164,7 +166,8 @@ object CommandHandler {
     case Left(e) =>
       IO.println(e.getMessage())
     case Right(payload) =>
-      val uploadLog = CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} ${payload.replication_factor}"
+      val uploadLog = CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} " +
+        s"${payload.replicationFactor} ${payload.experimentId}"
       val result:EitherT[IO,Failure,FileMetadata] = for {
         _                <- Logger.eitherTLogger[IO,Failure].debug(uploadLog)
         currentState     <- EitherT(state.get.map(_.asRight[Failure]))
@@ -174,7 +177,7 @@ object CommandHandler {
           metadata         <- saveAndCompress(payload,maybeMeta)
         } yield metadata
 
-       m <- if(currentState.availableResources <= payload.replication_factor)
+       m <- if(currentState.availableResources <= payload.replicationFactor)
          EitherT.fromEither[IO](Either.left[Failure,FileMetadata](RFGreaterThanAR()))
        else metadata
       } yield m
@@ -205,9 +208,10 @@ object CommandHandler {
                     originalFilename = metadata.originalName,
                     originalExtension = metadata.originalExtension,
                     originalSize = metadata.size,
-                    replication_factor=payload.replication_factor,
+                    replicationFactor=payload.replicationFactor,
                     compressionAlgorithm = payload.compressionAlgorithm,
-                    nodes= config.nodeId::Nil
+                    nodes= config.nodeId::Nil,
+                    experimentId = payload.experimentId
                   )
                   _               <- H.replicate(currentState,replicationPayload)
 //                  _              <- if(payload.replicas==0) Logger[IO].debug(s"REPLICATION_FINISHED ${payload.id}")

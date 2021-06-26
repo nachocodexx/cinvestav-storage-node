@@ -41,15 +41,31 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
   case class Command(command:Json)
 
+  test("aa"){
+    Stream.iterate(0)(_+1)
+      .debug()
+      .take(33).compile.drain
+  }
+
 //  test("shell"){
 //    IO.pure(cmd!)
 //      .flatMap(IO.println)
 //  }
-  def workload(bullies:List[String],lb:balancer.LoadBalancer)(implicit H:Helpers): IO[Unit] = Stream.iterate(0)(_+1)
+  def workload(experimentId:Int,bullies:List[String],lb:balancer.LoadBalancer)(implicit H:Helpers): IO[Unit] = Stream
+  .iterate(0)(_+1)
     .covary[IO]
     .evalMap{ i =>
       val node = lb.balance(bullies)
-      val uploadPayload = Payloads.UploadFile(s"op-$i",UUID.randomUUID().toString,s"$i","pdf","user_00","http://10.0.0.11", 2)
+      val uploadPayload = Payloads.UploadFile(
+        id     = s"op-$i",
+        fileId = UUID.randomUUID().toString,
+        filename= s"$i",
+        extension = "pdf",
+        userId = "user_00",
+        url = "http://10.0.0.23",
+        replicationFactor =  2,
+        experimentId = experimentId
+      )
       val uploadCmd = CommandData[Json](CommandId.UPLOAD_FILE,uploadPayload.asJson)
       val cmd = CommandData[Json]("RUN",payload = Command(uploadCmd.asJson).asJson)
       for {
@@ -58,8 +74,8 @@ class FilesSpec extends munit.CatsEffectSuite {
         _         <- publisher.publish(cmd.asJson.noSpaces)
       } yield ()
     }
-    .metered(1000 milliseconds)
-    .take(32)
+    .metered(1100 milliseconds)
+    .take(33)
     .compile.drain
 
   test("Workload") {
@@ -68,22 +84,25 @@ class FilesSpec extends munit.CatsEffectSuite {
 
     RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
       implicit val H: Helpers = Helpers()
-      val bullies = List("cs-0","cs-1","cs-2","cs-3","cs-4","cs-5")
+//      val bullies = List("cs-0","cs-1","docker lcs-2","cs-3","cs-4","cs-5")
+//      val bullies = List("cs-0","cs-1","cs-2","cs-3","cs-4","cs-5","cs-6","cs-7","cs-8","cs-9","cs-10","cs-11")
+      val bullies = List("cs-0","cs-1","cs-2","cs-3","cs-4","cs-5","cs-6","cs-7","cs-8")
+//      val bullies = List("cs-0","cs-1","cs-2")
       val lb = balancer.LoadBalancer(config.loadBalancer)
       val MAX_EXPERIMENTS = 50
       Stream.iterate(0)(_+1)
         .covary[IO]
         .evalMap(i=>Logger[IO].debug(s"EXPERIMENT[$i] INIT") *>i.pure[IO])
-        .evalMap{ i=>
+        .evalMap{ experimentId=>
           for {
-            _ <- workload(bullies,lb)
+            _ <- workload(experimentId,bullies,lb)
             _ <- IO.pure(cmd!)
             _ <- Logger[IO].debug("CLEAN FILES DONE")
-          } yield i
+          } yield experimentId
         }
         .evalMap(i=>Logger[IO].debug(s"EXPERIMENT[$i] DONE"))
         .take(MAX_EXPERIMENTS)
-        .metered(1 second)
+        .metered(1500 milliseconds)
         .compile.drain
 //      workload(bullies,lb)
 

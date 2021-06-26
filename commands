@@ -39,3 +39,26 @@
   }
 
 }
+
+
+
+{
+  "commandId":"RUN",
+  "payload":{
+     "command":{
+              "commandId":"UPLOAD_FILE",
+                "payload":{
+                  "id":"op_00",
+                  "fileId":"f_01",
+                  "userId":"u00",
+                  "filename":"1",
+                  "extension":"pdf",
+                  "url":"http://10.0.0.5",
+                  "replicationFactor":1,
+                  "compressionAlgorithm":"lz4",
+                  "experimentId":0
+              }
+      }
+  }
+
+}

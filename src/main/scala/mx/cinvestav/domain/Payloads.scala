@@ -9,27 +9,27 @@ object Payloads {
                          extension:String,
                          userId:String,
                          url:String,
-                         replication_factor:Int,
+                         replicationFactor:Int,
 //                         replicas:Int,nodes:List[String],
 //                         compression:Boolean,
-                         compressionAlgorithm:String = "lz4"
+                         compressionAlgorithm:String = "lz4",
+                         experimentId:Int
                        )
   case class UpdateReplicationFactor(replicationFactor:Int)
 
   case class Replication(
                           id:String,
                           fileId:String,
-                          //                          compressionAlgorithm:
-                          //                          filename:String,
                           extension:String,
                           userId:String,
                           url:String,
                           originalFilename:String,
                           originalExtension:String,
                           originalSize:Long,
-                          replication_factor:Int,
+                          replicationFactor:Int,
                           compressionAlgorithm:String,
-                          nodes:List[String]
+                          nodes:List[String],
+                          experimentId:Int
                         )
 
 
