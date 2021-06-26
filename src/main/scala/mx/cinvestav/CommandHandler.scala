@@ -5,6 +5,7 @@ import cats.data.EitherT
 import cats.implicits._
 import cats.effect.{IO, Ref}
 import fs2.concurrent.SignallingRef
+import mx.cinvestav.commons.status
 import mx.cinvestav.domain.Errors.{DuplicatedReplica, Failure, RFGreaterThanAR}
 import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, Replica}
 
@@ -23,6 +24,7 @@ import mx.cinvestav.commons.commands.Identifiers
 //
 import org.typelevel.log4cats.Logger
 import mx.cinvestav.commons.balancer
+import sys.process._
 //
 import scala.concurrent.duration._
 import scala.language.postfixOps
@@ -36,6 +38,26 @@ object CommandHandler {
   implicit val replicationPayloadDecoder:Decoder[Payloads.Replication] = deriveDecoder
   implicit val newCoordinatorPayloadDecoder:Decoder[payloads.NewCoordinator] = deriveDecoder
   implicit val newCoordinatorV2PayloadDecoder:Decoder[payloads.NewCoordinatorV2] = deriveDecoder
+
+  def reset(command: Command[Json],state:Ref[IO,NodeState])(implicit config: DefaultConfig,logger: Logger[IO]) = for {
+    _ <- Logger[IO].debug(s"RESET ${config.nodeId}")
+//    cmdRm = s"echo demonio0 | sudo -S rm ${config.storagePath}/*.*"
+    cmdRm = s"rm ${config.storagePath}/*.*"
+    cmd   = Seq("/bin/sh","-c",cmdRm)
+    currentState   <- state.get
+    _initState      <- NodeState(
+      status             = status.Up,
+      heartbeatSignal    = currentState.heartbeatSignal,
+      loadBalancer       = balancer.LoadBalancer(config.loadBalancer),
+      replicationFactor  = config.replicationFactor,
+      storagesNodes      = config.storageNodes,
+      ip                 = InetAddress.getLocalHost.getHostAddress,
+      availableResources = config.storageNodes.length+1,
+//      metadata          =
+    ).pure[IO]
+    _  <- state.update(_=>_initState)
+    _ <- IO.pure(cmd!)
+  } yield ()
 
   def newCoordinatorV2(command: Command[Json],state:Ref[IO,NodeState])(implicit logger: Logger[IO]): IO[Unit] =
     command.payload.as[payloads.NewCoordinatorV2] match {

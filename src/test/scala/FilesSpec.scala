@@ -41,18 +41,8 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
   case class Command(command:Json)
 
-  test("aa"){
+  def workload(experimentId:Int,bullies:List[String],lb:balancer.LoadBalancer)(implicit H:Helpers): IO[Unit] =
     Stream.iterate(0)(_+1)
-      .debug()
-      .take(33).compile.drain
-  }
-
-//  test("shell"){
-//    IO.pure(cmd!)
-//      .flatMap(IO.println)
-//  }
-  def workload(experimentId:Int,bullies:List[String],lb:balancer.LoadBalancer)(implicit H:Helpers): IO[Unit] = Stream
-  .iterate(0)(_+1)
     .covary[IO]
     .evalMap{ i =>
       val node = lb.balance(bullies)
@@ -84,10 +74,10 @@ class FilesSpec extends munit.CatsEffectSuite {
 
     RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
       implicit val H: Helpers = Helpers()
-//      val bullies = List("cs-0","cs-1","docker lcs-2","cs-3","cs-4","cs-5")
-//      val bullies = List("cs-0","cs-1","cs-2","cs-3","cs-4","cs-5","cs-6","cs-7","cs-8","cs-9","cs-10","cs-11")
-      val bullies = List("cs-0","cs-1","cs-2","cs-3","cs-4","cs-5","cs-6","cs-7","cs-8")
-//      val bullies = List("cs-0","cs-1","cs-2")
+      val totalOfNodes = 3
+      val nodesIds = 0 until totalOfNodes
+      val storagesNodes = nodesIds.map(id=>s"sn-$id").toList
+      val bullies = nodesIds.map(id=>s"cs-$id").toList
       val lb = balancer.LoadBalancer(config.loadBalancer)
       val MAX_EXPERIMENTS = 50
       Stream.iterate(0)(_+1)
@@ -95,12 +85,17 @@ class FilesSpec extends munit.CatsEffectSuite {
         .evalMap(i=>Logger[IO].debug(s"EXPERIMENT[$i] INIT") *>i.pure[IO])
         .evalMap{ experimentId=>
           for {
-            _ <- workload(experimentId,bullies,lb)
-            _ <- IO.pure(cmd!)
-            _ <- Logger[IO].debug("CLEAN FILES DONE")
+            _        <- workload(experimentId,bullies,lb)
+            sns      <- storagesNodes.traverse(sn=>H.fromNodeIdToPublisher(sn,s"${config.poolId}.$sn.default"))
+            resetCmd <- CommandData[Json](CommandId.RESET,Json.Null).asJson.noSpaces.pure[IO]
+             _       <- sns.traverse(_.publish(resetCmd))
           } yield experimentId
         }
-        .evalMap(i=>Logger[IO].debug(s"EXPERIMENT[$i] DONE"))
+        .evalMap{i=>
+          for {
+            _ <- Logger[IO].debug(s"EXPERIMENT[$i] DONE")
+          } yield ()
+        }
         .take(MAX_EXPERIMENTS)
         .metered(1500 milliseconds)
         .compile.drain

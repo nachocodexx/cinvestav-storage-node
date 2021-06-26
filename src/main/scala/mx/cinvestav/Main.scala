@@ -55,6 +55,8 @@ object Main extends IOApp{
               CommandHandler.startHeartbeat(command,state)
             case Identifiers.STOP_HEARTBEAT =>
               CommandHandler.stopHeartbeat(command,state)
+            case CommandId.RESET =>
+              CommandHandler.reset(command,state)
             case _ => state.get.map(_.metadata).flatMap(IO.println)
 //              IO.println("UNKNOWN_COMMAND")
           }

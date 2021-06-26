@@ -88,32 +88,6 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 
   } yield ()
 
-//  def continueReplication(currentState:NodeState, payload: Payloads.UploadFile)(implicit config: DefaultConfig): IO[Unit] = for {
-//    lb             <-  currentState.loadBalancer.pure[IO]
-//    storageNodes   <- currentState.storagesNodes.pure[IO]
-//    availableNodes <- storageNodes.toSet.diff(
-//      payload.nodes.filter(_!=config.nodeId).toSet
-//    ).toList.pure[IO]
-//    _              <- Logger[IO].debug("AVAILABLE_NODES "+availableNodes.mkString(","))
-//    nodeId     <- lb.balance(availableNodes).pure[IO]
-//    uploadPayload    <- Payloads.UploadFile(
-//      id          = payload.id,
-//      fileId      = payload.fileId,
-//      userId      = payload.userId,
-//      url         = payload.url,
-////      url         = currentState.ip,
-//      replicas    = payload.replicas-1,
-//      nodes       = payload.nodes:+ config.nodeId,
-//      filename    = payload.filename,
-////      filename    = payload.fileId,
-//      extension   = payload.extension,
-////      extension   = payload.compressionAlgorithm,
-//    ).pure[IO]
-//    publisher <- fromNodeIdToPublisher(nodeId,s"${config.poolId}.$nodeId.default")
-//    cmd       <- CommandData[Json](CommandId.UPLOAD_FILE,uploadPayload.asJson).pure[IO]
-//    _         <- publisher.publish(cmd.asJson.noSpaces)
-//    _         <- Logger[IO].debug(s"SEND_FILE ${payload.id} $nodeId")
-//  } yield ()
 
   def fromNodeIdToPublisher(nodeId:String,routingKey:String,metadata:Map[String, String]=Map.empty[String, String]): IO[PublisherNode] =
     for {
