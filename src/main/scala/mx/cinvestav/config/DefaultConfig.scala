@@ -12,5 +12,6 @@ case class DefaultConfig(
                           storageNodes:List[String],
                           heartbeatTime:Int,
                           rabbitmq: RabbitMQConfig,
-                          port:Int
+                          port:Int,
+                          replicationStrategy:String
                         )

@@ -25,5 +25,9 @@ case class NodeState(
                   loadBalancer:balancer.LoadBalancer,
                   metadata:Map[String,FileMetadata] = Map.empty[String,FileMetadata],
                   ip:String = "127.0.0.1",
-                  availableResources:Int
+                  availableResources:Int,
+//                    New
+                    freeStorageSpace:Long,
+                    usedStorageSpace:Long,
+                    replicationStrategy:String
             )

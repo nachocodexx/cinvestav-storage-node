@@ -9,6 +9,7 @@ import mx.cinvestav.commons.status
 import mx.cinvestav.domain.Errors.{DuplicatedReplica, Failure, RFGreaterThanAR}
 import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, Replica}
 
+import java.io.File
 import java.net.InetAddress
 //
 import dev.profunktor.fs2rabbit.model.ExchangeType
@@ -41,19 +42,21 @@ object CommandHandler {
 
   def reset(command: Command[Json],state:Ref[IO,NodeState])(implicit config: DefaultConfig,logger: Logger[IO]) = for {
     _ <- Logger[IO].debug(s"RESET ${config.nodeId}")
-//    cmdRm = s"echo demonio0 | sudo -S rm ${config.storagePath}/*.*"
-    cmdRm = s"rm ${config.storagePath}/*.*"
-    cmd   = Seq("/bin/sh","-c",cmdRm)
+    cmdRm    = s"rm ${config.storagePath}/*.*"
+    rootFile = new File("/")
+    cmd      = Seq("/bin/sh","-c",cmdRm)
     currentState   <- state.get
     _initState      <- NodeState(
-      status             = status.Up,
-      heartbeatSignal    = currentState.heartbeatSignal,
-      loadBalancer       = balancer.LoadBalancer(config.loadBalancer),
-      replicationFactor  = config.replicationFactor,
-      storagesNodes      = config.storageNodes,
-      ip                 = InetAddress.getLocalHost.getHostAddress,
-      availableResources = config.storageNodes.length+1,
-//      metadata          =
+      status              = status.Up,
+      heartbeatSignal     = currentState.heartbeatSignal,
+      loadBalancer        = balancer.LoadBalancer(config.loadBalancer),
+      replicationFactor   = config.replicationFactor,
+      storagesNodes       = config.storageNodes,
+      ip                  = InetAddress.getLocalHost.getHostAddress,
+      availableResources  = config.storageNodes.length+1,
+      replicationStrategy =  config.replicationStrategy,
+      freeStorageSpace    = rootFile.getFreeSpace,
+      usedStorageSpace    =  rootFile.getTotalSpace - rootFile.getFreeSpace
     ).pure[IO]
     _  <- state.update(_=>_initState)
     _ <- IO.pure(cmd!)

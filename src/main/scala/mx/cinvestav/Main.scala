@@ -6,11 +6,13 @@ import fs2.concurrent.SignallingRef
 import mx.cinvestav.commons.balancer
 import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.config.DefaultConfig
+import mx.cinvestav.domain.Constants.ReplicationStrategies
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import mx.cinvestav.utils.RabbitMQUtils.dynamicRabbitMQConfig
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+import java.io.File
 import java.net.InetAddress
 //
 import cats.effect.{ExitCode, IO, IOApp}
@@ -65,39 +67,48 @@ object Main extends IOApp{
   } yield ()
 
 
+  def initQueues(mainQueueName:String)(implicit utils: RabbitMQUtils[IO]): IO[Unit] = for {
+    _               <- utils.createQueue(
+      queueName    = mainQueueName,
+      exchangeName =  config.poolId,
+      exchangeType = ExchangeType.Topic,
+      routingKey   =  s"${config.poolId}.${config.nodeId}.default"
+    )
+    _               <- utils.bindQueue(
+      queueName    = mainQueueName,
+      exchangeName = config.poolId,
+      routingKey   = s"${config.poolId}.#.config")
+  } yield ()
 
 
   override def run(args: List[String]): IO[ExitCode] = {
     RabbitMQUtils.init[IO](rabbitMQConfig){ implicit utils=>
         for {
-          _               <- Logger[IO].trace(config.toString)
-          _               <- Logger[IO].trace(s"STORAGE NODE[${config.nodeId}] is up and running 🚀")
+          _               <- Logger[IO].info(config.toString)
+          _               <- Logger[IO].info(s"STORAGE NODE[${config.nodeId}] is up and running 🚀")
+//
           heartbeatSignal <- SignallingRef[IO,Boolean](false)
+//
+          rootFile = new File("/")
           _initState      <- NodeState(
-            status             = status.Up,
-            heartbeatSignal    = heartbeatSignal,
-            loadBalancer       = balancer.LoadBalancer(config.loadBalancer),
-            replicationFactor  = config.replicationFactor,
-            storagesNodes      = config.storageNodes,
-            ip                 = InetAddress.getLocalHost.getHostAddress,
-            availableResources = config.storageNodes.length+1
+            status              = status.Up,
+            heartbeatSignal     = heartbeatSignal,
+            loadBalancer        = balancer.LoadBalancer(config.loadBalancer),
+            replicationFactor   = config.replicationFactor,
+            storagesNodes       = config.storageNodes,
+            ip                  = InetAddress.getLocalHost.getHostAddress,
+            availableResources  = config.storageNodes.length+1,
+            replicationStrategy = config.replicationStrategy,
+            freeStorageSpace    = rootFile.getFreeSpace,
+            usedStorageSpace    = rootFile.getTotalSpace - rootFile.getFreeSpace
           ).pure[IO]
           state           <- IO.ref(_initState)
           //        MAIN PROGRAM
           mainQueueName   <- IO.pure(s"${config.poolId}-${config.nodeId}")
-          _               <- utils.createQueue(
-                queueName    = mainQueueName,
-                exchangeName =  config.poolId,
-                exchangeType = ExchangeType.Topic,
-                routingKey   =  s"${config.poolId}.${config.nodeId}.default"
-          )
-          _               <- utils.bindQueue(
-            queueName    = mainQueueName,
-            exchangeName = config.poolId,
-            routingKey   = s"${config.poolId}.#.config")
-          _                  <- Logger[IO].debug("START")
-          helpers            = Helpers()
-          _                  <- program(mainQueueName,state)(utils,helpers)
+          _               <- initQueues(mainQueueName)
+          _               <- Logger[IO].debug(s"[START STORAGE NODE] ${_initState}")
+          helpers         = Helpers()
+          _               <- program(mainQueueName,state)(utils,helpers)
         } yield ()
       }
     }.as(ExitCode.Success)
