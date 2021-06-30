@@ -52,25 +52,6 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       } yield fileMetadata
       fileMetadata
   }
-//
-//  def createFileMetadata(previousMeta:Option[FileMetadata],payload: Payloads.UploadFile,file: File):IO[FileMetadata]
-//  = previousMeta match {
-//    case Some(value) =>  IO.raiseError(new Throwable("FILE ALREADY EXISTS"))
-//    case None =>
-//      for {
-//        timestamp     <- IO.realTime.map(_.toSeconds/1000L)
-//        replica       <- Replica(config.nodeId,payload.nodes.isEmpty,0,timestamp).pure[IO]
-//        fileMetadata  <- FileMetadata(
-//          originalName = payload.filename,
-//          originalExtension = payload.extension,
-//          compressionAlgorithm = "LZ4",
-//          size = file.length(),
-//          replicas = replica::Nil,
-//          compressionExt = "lz4"
-//        ).pure[IO]
-//      } yield fileMetadata
-//  }
-
 
   def replicate(currentState:NodeState,payload: Payloads.Replication): IO[Unit] = for {
 //    _              <- Logger[IO].debug(CommandId.REPLICATION+s" ${payload.id}")
@@ -81,19 +62,13 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     ).toList.pure[IO]
     nodeId     <- lb.balance(availableNodes).pure[IO]
 //    replicationPayload = payload.copy(url = currentState.ip,nodes = payload.nodes:+nodeId)
-    publisher <- fromNodeIdToPublisher(nodeId,s"${config.poolId}.$nodeId.default")
+    publisher <- utils.fromNodeIdToPublisher(nodeId,config.poolId,s"${config.poolId}.$nodeId.default")
     cmd       <- CommandData[Json](CommandId.REPLICATION,payload.asJson).pure[IO]
     _         <- publisher.publish(cmd.asJson.noSpaces)
     _         <- Logger[IO].debug(s"SENT_REPLICATION_CMD ${payload.id} $nodeId ${payload.experimentId}")
 
   } yield ()
 
-
-  def fromNodeIdToPublisher(nodeId:String,routingKey:String,metadata:Map[String, String]=Map.empty[String, String]): IO[PublisherNode] =
-    for {
-    publish <- utils.createPublisher(config.poolId,routingKey)
-    pubInfo <- PublisherNode(nodeId,publish,metadata).pure[IO]
-  }  yield pubInfo
 
   def _startHeart(heartbeatSignal:SignallingRef[IO,Boolean]): IO[Unit] =  for {
     _               <- heartbeatSignal.set(false)

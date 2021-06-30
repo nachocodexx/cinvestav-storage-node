@@ -41,7 +41,7 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
   case class Command(command:Json)
 
-  def workload(experimentId:Int,bullies:List[String],lb:balancer.LoadBalancer)(implicit H:Helpers): IO[Unit] =
+  def workload(experimentId:Int,bullies:List[String],lb:balancer.LoadBalancer)(implicit utils: RabbitMQUtils[IO]): IO[Unit] =
     Stream.iterate(0)(_+1)
     .covary[IO]
     .evalMap{ i =>
@@ -60,17 +60,17 @@ class FilesSpec extends munit.CatsEffectSuite {
       val cmd = CommandData[Json]("RUN",payload = Command(uploadCmd.asJson).asJson)
       for {
         _         <-Logger[IO].debug(s"SEND file $i.pdf to $node")
-        publisher <- H.fromNodeIdToPublisher(node,s"${config.poolId}.$node.default")
+        publisher <- utils.fromNodeIdToPublisher(node,config.poolId,s"${config.poolId}.$node.default")
         _         <- publisher.publish(cmd.asJson.noSpaces)
       } yield ()
     }
-    .metered(1100 milliseconds)
-    .take(33)
+    .metered(1500 milliseconds)
+    .take(100)
     .compile.drain
 
   test("Workload") {
-    val cmdRm =  """echo demonio0 | sudo -S rm /home/nacho/Documents/test/storage/sn-*/*"""
-    val cmd = Seq("/bin/bash","-c",cmdRm)
+//    val cmdRm =  """echo demonio0 | sudo -S rm /home/nacho/Documents/test/storage/sn-*/*"""
+//    val cmd = Seq("/bin/bash","-c",cmdRm)
 
     RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
       implicit val H: Helpers = Helpers()
@@ -86,7 +86,7 @@ class FilesSpec extends munit.CatsEffectSuite {
         .evalMap{ experimentId=>
           for {
             _        <- workload(experimentId,bullies,lb)
-            sns      <- storagesNodes.traverse(sn=>H.fromNodeIdToPublisher(sn,s"${config.poolId}.$sn.default"))
+            sns      <- storagesNodes.traverse(sn=>utils.fromNodeIdToPublisher(sn,config.poolId,s"${config.poolId}.$sn"+s".default"))
             resetCmd <- CommandData[Json](CommandId.RESET,Json.Null).asJson.noSpaces.pure[IO]
              _       <- sns.traverse(_.publish(resetCmd))
           } yield experimentId
