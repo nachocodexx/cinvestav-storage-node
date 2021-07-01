@@ -17,6 +17,39 @@ object Payloads {
                        )
   case class UpdateReplicationFactor(replicationFactor:Int)
 
+  case class ActiveReplicationDone(
+                                    id:String,
+                                    fileId:String,
+                                    replica: Replica,
+                                    transferred:Long
+                                  )
+  case class ActiveReplication(
+                          id:String,
+                          fileId:String,
+//                          extension:String,
+                              leaderNodeId:String,
+                          userId:String,
+                          url:String,
+                          metadata:FileMetadata
+//                          url:String,
+//                          originalFilename:String,
+//                          originalExtension:String,
+//                          originalSize:Long,
+//                          replicationFactor:Int,
+//                          compressionAlgorithm:String,
+//                          nodes:List[String],
+//                          experimentId:Int,
+//                          //                          New
+//                          replicationStrategy:String
+                        )
+  case class PassiveReplication(
+                               id:String,
+                               userId:String,
+                               metadata: FileMetadata,
+                               replicasCounter:Int
+                               )
+
+  case class AddReplica(id:String,fileId:String,replica: Replica)
   case class Replication(
                           id:String,
                           fileId:String,
@@ -29,7 +62,9 @@ object Payloads {
                           replicationFactor:Int,
                           compressionAlgorithm:String,
                           nodes:List[String],
-                          experimentId:Int
+                          experimentId:Int,
+//                          New
+                          replicationStrategy:String
                         )
 
 

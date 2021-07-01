@@ -30,7 +30,7 @@ import sys.process._
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
-object CommandHandler {
+object CommandHandlers {
   implicit val downloadFilePayloadDecoder:Decoder[Payloads.DownloadFile] = deriveDecoder
   implicit val updateReplicationFactorPayloadDecoder:Decoder[Payloads.UpdateReplicationFactor] = deriveDecoder
   implicit val uploadFilePayloadDecoder:Decoder[Payloads.UploadFile] = deriveDecoder
@@ -40,7 +40,7 @@ object CommandHandler {
   implicit val newCoordinatorPayloadDecoder:Decoder[payloads.NewCoordinator] = deriveDecoder
   implicit val newCoordinatorV2PayloadDecoder:Decoder[payloads.NewCoordinatorV2] = deriveDecoder
 
-  def reset(command: Command[Json],state:Ref[IO,NodeState])(implicit config: DefaultConfig,logger: Logger[IO]) = for {
+  def reset(command: Command[Json],state:Ref[IO,NodeState])(implicit config: DefaultConfig,logger: Logger[IO]): IO[Unit] = for {
     _ <- Logger[IO].debug(s"RESET ${config.nodeId}")
     cmdRm    = s"rm ${config.storagePath}/*.*"
     rootFile = new File("/")
@@ -105,7 +105,7 @@ object CommandHandler {
           case Right(_) => for {
             _ <-Logger[IO].debug(s"REPLICA_SAVED_SUCCESSFULLY ${payload.id} ${payload.experimentId}")
             newPayload = payload.copy(url =  s"http://${currentState.ip}",nodes = payload.nodes:+config.nodeId)
-            _<- if(continueReplication) H.replicate(currentState, newPayload) else replicationCompletedLog
+            _<- if(continueReplication) H.passiveReplication(currentState, newPayload) else replicationCompletedLog
           } yield ()
         }
 //        _ <- H.replicate(currentState,payload)
@@ -210,9 +210,9 @@ object CommandHandler {
 
       result.value.flatMap {
         case Left(e) => e match {
-          case Errors.DuplicatedReplica(fileId) =>
+          case Errors.DuplicatedReplica(fileId,_) =>
             Logger[IO].error(s"DUPLICATED_REPLICA $fileId")
-          case Errors.FileNotFound(filename) =>
+          case Errors.FileNotFound(filename,_) =>
             Logger[IO].error(s"FILE_NOT_FOUND $filename")
           case Errors.CompressionFail(message) =>
             Logger[IO].error(message)
@@ -224,21 +224,22 @@ object CommandHandler {
         case Right(metadata) =>
                 for {
                   currentState   <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
-                  replicationPayload = Payloads.Replication(
-                    id = payload.id,
-                    fileId = payload.fileId,
-                    extension = metadata.compressionExt,
-                    userId=payload.userId,
-                    url = s"http://${currentState.ip}",
-                    originalFilename = metadata.originalName,
-                    originalExtension = metadata.originalExtension,
-                    originalSize = metadata.size,
-                    replicationFactor=payload.replicationFactor,
+                  replicationPayload     = Payloads.Replication(
+                    id                   = payload.id,
+                    fileId               = payload.fileId,
+                    extension            = metadata.compressionExt,
+                    userId               = payload.userId,
+                    url                  = s"http://${currentState.ip}",
+                    originalFilename     = metadata.originalName,
+                    originalExtension    = metadata.originalExtension,
+                    originalSize         = metadata.size,
+                    replicationFactor    = payload.replicationFactor,
                     compressionAlgorithm = payload.compressionAlgorithm,
-                    nodes= config.nodeId::Nil,
-                    experimentId = payload.experimentId
+                    nodes                = config.nodeId::Nil,
+                    experimentId         = payload.experimentId,
+                    replicationStrategy = currentState.replicationStrategy
                   )
-                  _               <- H.replicate(currentState,replicationPayload)
+                  _               <- H.passiveReplication(currentState,replicationPayload)
 //                  _              <- if(payload.replicas==0) Logger[IO].debug(s"REPLICATION_FINISHED ${payload.id}")
 //                                  else H.continueReplication(currentState,payload)
 //                                  else H.continueReplication(currentState,payload)

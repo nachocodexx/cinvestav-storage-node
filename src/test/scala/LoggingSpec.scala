@@ -3,8 +3,15 @@ import cats.implicits._
 import cats.effect._
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+import java.net.URL
+
 class LoggingSpec extends munit .CatsEffectSuite {
   implicit def unsafeLogger = Slf4jLogger.getLogger[IO]
+  test("URL"){
+    val url = new URL("http://10.0.0.0/filename.lz4")
+    println(url.getPath)
+  }
   test("Basic") {
 //    Logger.eitherTLogger[IO,Throwable]
     val a:EitherT[IO,Throwable,Int] = for {

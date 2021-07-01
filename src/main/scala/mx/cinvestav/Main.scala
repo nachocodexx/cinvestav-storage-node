@@ -7,6 +7,8 @@ import mx.cinvestav.commons.balancer
 import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.ReplicationStrategies
+import mx.cinvestav.domain.Payloads.{ActiveReplication, ActiveReplicationDone}
+import mx.cinvestav.handlers.{ActiveReplicationDoneHandler, ActiveReplicationHandler, AddReplicaHandler, UploadHandler}
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import mx.cinvestav.utils.RabbitMQUtils.dynamicRabbitMQConfig
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
@@ -41,24 +43,17 @@ object Main extends IOApp{
       .evalMap {
         command =>
           command.commandId match {
-            case Identifiers.NEW_COORDINATOR =>
-              CommandHandler.newCoordinator(command,state)
-            case Identifiers.NEW_COORDINATOR_V2 =>
-              CommandHandler.newCoordinatorV2(command,state)
-            case CommandId.DOWNLOAD_FILE =>
-              CommandHandler.downloadFile(command,state)
-            case CommandId.UPLOAD_FILE =>
-              CommandHandler.uploadFile(command,state)
-            case CommandId.REPLICATION =>
-              CommandHandler.replication(command,state)
-            case CommandId.UPDATE_REPLICATION_FACTOR =>
-              CommandHandler.updateReplicationFactor(command, state)
-            case Identifiers.START_HEARTBEAT =>
-              CommandHandler.startHeartbeat(command,state)
-            case Identifiers.STOP_HEARTBEAT =>
-              CommandHandler.stopHeartbeat(command,state)
-            case CommandId.RESET =>
-              CommandHandler.reset(command,state)
+            case Identifiers.NEW_COORDINATOR         => CommandHandlers.newCoordinator(command,state)
+            case Identifiers.NEW_COORDINATOR_V2      => CommandHandlers.newCoordinatorV2(command,state)
+            case CommandId.DOWNLOAD_FILE             => CommandHandlers.downloadFile(command,state)
+            case CommandId.UPLOAD_FILE               => UploadHandler(command,state)
+            case CommandId.ACTIVE_REPLICATION        => ActiveReplicationHandler(command,state)
+            case CommandId.ACTIVE_REPLICATION_DONE   => ActiveReplicationDoneHandler(command,state)
+            case CommandId.ADD_REPLICA               => AddReplicaHandler(command,state)
+            case CommandId.UPDATE_REPLICATION_FACTOR => CommandHandlers.updateReplicationFactor(command, state)
+            case Identifiers.START_HEARTBEAT         => CommandHandlers.startHeartbeat(command,state)
+            case Identifiers.STOP_HEARTBEAT          => CommandHandlers.stopHeartbeat(command,state)
+            case CommandId.RESET                     => CommandHandlers.reset(command,state)
             case _ => state.get.map(_.metadata).flatMap(IO.println)
 //              IO.println("UNKNOWN_COMMAND")
           }
@@ -89,7 +84,7 @@ object Main extends IOApp{
 //
           heartbeatSignal <- SignallingRef[IO,Boolean](false)
 //
-          rootFile = new File("/")
+          rootFile        = new File("/")
           _initState      <- NodeState(
             status              = status.Up,
             heartbeatSignal     = heartbeatSignal,
