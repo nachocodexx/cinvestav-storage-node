@@ -4,6 +4,7 @@ import cats.implicits._
 import cats.effect._
 import io.circe.Decoder.Result
 import io.circe.{DecodingFailure, Json}
+import mx.cinvestav.Main.{NodeContext, unsafeLogger}
 //import io.circe.generic.aut
 import io.circe.generic.auto._
 import io.circe.syntax._
@@ -19,11 +20,7 @@ import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, NodeState, Payloads
 import mx.cinvestav.utils.Command
 import org.typelevel.log4cats.Logger
 
-class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit
-                                                                    utils: RabbitMQUtils[IO],
-                                                                    config:DefaultConfig,
-                                                                    H:Helpers,
-                                                                    logger: Logger[IO]) extends CommandHandler[IO, Payloads.UploadFile]{
+class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO, Payloads.UploadFile]{
 
   def logE(payload: Payloads.UploadFile): EitherT[IO, Failure, Unit] =
     Logger.eitherTLogger[IO,Failure].debug(
@@ -32,25 +29,24 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit
 
   def handleSaveAndCompressError(failure: Failure): IO[Unit] =  failure match {
     case Errors.DuplicatedReplica(fileId,_) =>
-      Logger[IO].error(s"DUPLICATED_REPLICA $fileId")
+      ctx.logger.error(s"DUPLICATED_REPLICA $fileId")
     case Errors.FileNotFound(filename,_) =>
-      Logger[IO].error(s"FILE_NOT_FOUND $filename")
+      ctx.logger.error(s"FILE_NOT_FOUND $filename")
     case Errors.CompressionFail(message) =>
-      Logger[IO].error(message)
+      ctx.logger.error(message)
     case RFGreaterThanAR(message) =>
-      Logger[IO].error(message)
+      ctx.logger.error(message)
     case _ =>
-      Logger[IO].error("UNKNOWN_ERROR")
+      ctx.logger.error("UNKNOWN_ERROR")
   }
 
   def handleSaveAndCompressSuccess(payload:Payloads.UploadFile,metadata: FileMetadata): IO[Unit] = for {
       currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
-       _           <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE) Logger[IO].debug("PASSIVE_REPLICATION")
-//         ACTIVE
-       else H.activeReplication(payload,metadata,currentState)
+       _           <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE)   ctx.helpers.buildPassiveReplication(payload,metadata,state)
+       else ctx.helpers.activeReplication(payload,metadata,currentState)
     } yield ( )
 
-  override def handleLeft(df: DecodingFailure): IO[Unit] = Logger[IO].error(df.getMessage())
+  override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
   override def handleRight(payload: Payloads.UploadFile): IO[Unit] = {
     val maybeSaveAndCompress:EitherT[IO,Failure,FileMetadata] = for {
       _                <- logE(payload)
@@ -58,7 +54,7 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit
 
       metadata = for {
         maybeMeta        <- EitherT.fromEither[IO](currentState.metadata.get(payload.fileId).asRight[Failure])
-        metadata         <- H.saveAndCompress(payload,maybeMeta)
+        metadata         <- ctx.helpers.saveAndCompress(payload,maybeMeta)
       } yield metadata
 
       m <- if(currentState.availableResources <= payload.replicationFactor)
@@ -78,6 +74,6 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit
 }
 
 object UploadHandler{
-  def apply(command:Command[Json],state:Ref[IO,NodeState])(implicit utils:RabbitMQUtils[IO], config:DefaultConfig, H:Helpers, logger: Logger[IO]): IO[Unit] =
+  def apply(command:Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]): IO[Unit] =
     new UploadHandler(command,state).handle()
 }

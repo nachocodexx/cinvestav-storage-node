@@ -9,6 +9,7 @@ object Constants {
   object CompressionUtils {
     def getExtensionByCompressionAlgorithm(algorithm:String): String = algorithm match {
       case "lz4" => "lz4"
+      case "LZ4" => "lz4"
       case _ => ""
     }
   }

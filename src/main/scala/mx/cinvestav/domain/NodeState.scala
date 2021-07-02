@@ -9,7 +9,7 @@ case class FileMetadata(
                          originalName:String,
                          originalExtension:String,
                          size:Long,
-                         compressionExt:String,
+//                         compressionExt:String,
                          compressionAlgorithm:String,
                          replicas:List[Replica]
                        )

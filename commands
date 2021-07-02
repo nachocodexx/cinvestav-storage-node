@@ -83,3 +83,29 @@
   }
 
 }
+
+
+
+{
+ "commandId":"PASSIVE_REPLICATION",
+ "payload":{
+    "id":"op-1xeFSD",
+    "userId":"us-d2dsA",
+    "fileId":"f-12dF2",
+    "replicationFactor":2,
+    "replicasCounter":0,
+    "metadata":{
+         "originalName":"1",
+         "originalExtension":"pdf",
+         "size":0,
+         "compressionAlgorithm":"LZ4",
+         "replicas":[
+           {"nodeId":"sn-0","primary":true,"version":0,"timestamp":0},
+           {"nodeId":"sn-0","primary":true,"version":0,"timestamp":0}
+         ]
+    }
+ }
+}
+
+
+

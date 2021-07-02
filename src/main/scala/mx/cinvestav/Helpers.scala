@@ -9,6 +9,8 @@ import cats.implicits._
 import cats.effect.{IO, Ref}
 import dev.profunktor.fs2rabbit.model.ExchangeType
 import fs2.concurrent.SignallingRef
+import mx.cinvestav.Main.NodeContext
+import mx.cinvestav.commons.balancer.LoadBalancer
 import mx.cinvestav.domain.Errors.{CompressionFail, DecompressionFail, DuplicatedReplica, Failure, FileNotFound, RFGreaterThanAR}
 import mx.cinvestav.commons.commands.CommandData
 import mx.cinvestav.commons.payloads
@@ -80,19 +82,17 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
               } yield ()
   } yield ()
 
-  def saveAndCompress(payload: Payloads.UploadFile, maybeMeta:Option[FileMetadata])(implicit H:Helpers,
-                                                                                    config: DefaultConfig,
-                                                                                    logger: Logger[IO]):EitherT[IO, Failure, FileMetadata] =
+  def saveAndCompress(payload: Payloads.UploadFile, maybeMeta:Option[FileMetadata])(implicit ctx:NodeContext[IO]):EitherT[IO, Failure, FileMetadata] =
     if(maybeMeta.isDefined) EitherT.fromEither[IO](Left(DuplicatedReplica(payload.fileId)))
     else for {
-      file             <- H.saveFileE(payload)
+      file             <- ctx.helpers.saveFileE(payload)
       _                <-Logger.eitherTLogger[IO,Failure].debug(s"COMPRESSION_INIT ${payload.id} ${payload.fileId} " +
         s"${payload.experimentId}")
-      cs               <- H.compressEIO(file.getPath,s"${config.storagePath}")
+      cs               <- ctx.helpers.compressEIO(file.getPath,s"${config.storagePath}")
       _                <- Logger.eitherTLogger[IO,Failure]
         .debug(s"COMPRESSION_DONE ${payload.id} ${payload.fileId} ${cs.method} ${cs.millSeconds} ${cs.sizeIn} ${cs
           .sizeOut} ${cs.mbPerSecond} ${payload.experimentId}")
-      metadata         <- H.createFileMetadataE(payload,file)
+      metadata         <- ctx.helpers.createFileMetadataE(payload,file)
       _                <- EitherT.fromEither[IO](file.delete().asRight)
     } yield  metadata
 
@@ -108,13 +108,41 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
             originalExtension = payload.extension,
             compressionAlgorithm = "lz4",
             size = file.length(),
-            replicas = replica::Nil,
-            compressionExt = "lz4"
+            replicas = replica::Nil
+//            compressionExt = "lz4"
           ).asRight[Failure].pure[IO]
         )
       } yield fileMetadata
       fileMetadata
   }
+
+
+  def buildPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata,state: Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) = for {
+    ip <- state.get.map(_.ip)
+    ext = CompressionUtils.getExtensionByCompressionAlgorithm(payload.compressionAlgorithm)
+    passiveRepPayload = Payloads.PassiveReplication(
+    id=payload.id,
+    userId = payload.userId,
+    fileId = payload.fileId,
+    metadata =metadata,
+    replicationFactor = payload.replicationFactor,
+    url= s"http://$ip/${payload.fileId}.$ext",
+    lastNodeId = ctx.config.nodeId
+    )
+    _ <- _passiveReplication(state,Nil,passiveRepPayload)
+  } yield ()
+  def _passiveReplication(state:Ref[IO,NodeState],replicaNodes:List[String],newPayload:Payloads.PassiveReplication)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+    currentState  <- state.get
+    lb             =  currentState.loadBalancer
+    storageNodes   = currentState.storagesNodes
+    availableNodes = storageNodes.toSet.diff(replicaNodes.toSet).toList
+    cmd            = CommandData[Json](CommandId.PASSIVE_REPLICATION,newPayload.asJson).asJson.noSpaces
+    nextNodeId     <- lb.balance(availableNodes).pure[IO]
+    publisher      <- utils.fromNodeIdToPublisher(nextNodeId,config.poolId,s"${config.poolId}.$nextNodeId.default")
+    _              <- publisher.publish(cmd)
+    _              <- ctx.logger.debug(s"CONTINUE_PASSIVE_REPLICATION ${newPayload.id} $nextNodeId")
+
+  } yield ()
 
   def passiveReplication(currentState:NodeState, payload: Payloads.Replication): IO[Unit] = for {
     lb             <-  currentState.loadBalancer.pure[IO]

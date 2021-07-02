@@ -6,6 +6,7 @@ import cats.implicits._
 import cats.effect.{IO, Ref}
 import fs2.concurrent.SignallingRef
 import mx.cinvestav.commons.status
+import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.domain.Errors.{DuplicatedReplica, Failure, RFGreaterThanAR}
 import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, Replica}
 
@@ -227,7 +228,7 @@ object CommandHandlers {
                   replicationPayload     = Payloads.Replication(
                     id                   = payload.id,
                     fileId               = payload.fileId,
-                    extension            = metadata.compressionExt,
+                    extension            = CompressionUtils.getExtensionByCompressionAlgorithm(metadata.compressionAlgorithm),
                     userId               = payload.userId,
                     url                  = s"http://${currentState.ip}",
                     originalFilename     = metadata.originalName,

@@ -45,8 +45,11 @@ object Payloads {
   case class PassiveReplication(
                                id:String,
                                userId:String,
+                               fileId:String,
                                metadata: FileMetadata,
-                               replicasCounter:Int
+                               replicationFactor:Int,
+                               url:String,
+                               lastNodeId:String
                                )
 
   case class AddReplica(id:String,fileId:String,replica: Replica)

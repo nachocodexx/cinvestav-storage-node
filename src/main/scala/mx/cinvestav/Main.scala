@@ -7,8 +7,8 @@ import mx.cinvestav.commons.balancer
 import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.ReplicationStrategies
-import mx.cinvestav.domain.Payloads.{ActiveReplication, ActiveReplicationDone}
-import mx.cinvestav.handlers.{ActiveReplicationDoneHandler, ActiveReplicationHandler, AddReplicaHandler, UploadHandler}
+import mx.cinvestav.domain.Payloads.{ActiveReplication, ActiveReplicationDone, PassiveReplication}
+import mx.cinvestav.handlers.{ActiveReplicationDoneHandler, ActiveReplicationHandler, AddReplicaHandler, PassiveReplicationHandler, UploadHandler}
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import mx.cinvestav.utils.RabbitMQUtils.dynamicRabbitMQConfig
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
@@ -35,9 +35,10 @@ import io.circe._,io.circe.generic.auto._,io.circe.parser._,io.circe.syntax._
 object Main extends IOApp{
   implicit val config: DefaultConfig                       = ConfigSource.default.loadOrThrow[DefaultConfig]
   val rabbitMQConfig: Fs2RabbitConfig                      = dynamicRabbitMQConfig(config.rabbitmq)
+  case class NodeContext[F[_]](config: DefaultConfig,logger: Logger[F],helpers: Helpers,utils: RabbitMQUtils[F])
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
-  def program(queueName:String=config.nodeId,state:Ref[IO,NodeState])(implicit utils: RabbitMQUtils[IO],H:Helpers):IO[Unit] =
+  def program(queueName:String=config.nodeId,state:Ref[IO,NodeState])(implicit utils: RabbitMQUtils[IO],H:Helpers,ctx:NodeContext[IO]):IO[Unit] =
     for {
     _ <- utils.consumeJson(queueName)
       .evalMap {
@@ -47,10 +48,12 @@ object Main extends IOApp{
             case Identifiers.NEW_COORDINATOR_V2      => CommandHandlers.newCoordinatorV2(command,state)
             case CommandId.DOWNLOAD_FILE             => CommandHandlers.downloadFile(command,state)
             case CommandId.UPLOAD_FILE               => UploadHandler(command,state)
+            case CommandId.PASSIVE_REPLICATION       => PassiveReplicationHandler(command,state)
+//
             case CommandId.ACTIVE_REPLICATION        => ActiveReplicationHandler(command,state)
             case CommandId.ACTIVE_REPLICATION_DONE   => ActiveReplicationDoneHandler(command,state)
+//
             case CommandId.ADD_REPLICA               => AddReplicaHandler(command,state)
-            case CommandId.UPDATE_REPLICATION_FACTOR => CommandHandlers.updateReplicationFactor(command, state)
             case Identifiers.START_HEARTBEAT         => CommandHandlers.startHeartbeat(command,state)
             case Identifiers.STOP_HEARTBEAT          => CommandHandlers.stopHeartbeat(command,state)
             case CommandId.RESET                     => CommandHandlers.reset(command,state)
@@ -103,7 +106,8 @@ object Main extends IOApp{
           _               <- initQueues(mainQueueName)
           _               <- Logger[IO].debug(s"[START STORAGE NODE] ${_initState}")
           helpers         = Helpers()
-          _               <- program(mainQueueName,state)(utils,helpers)
+          ctx             = NodeContext[IO](config,logger = unsafeLogger,helpers=helpers,utils = utils)
+          _               <- program(mainQueueName,state)(utils,helpers,ctx)
         } yield ()
       }
     }.as(ExitCode.Success)
