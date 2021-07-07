@@ -6,10 +6,11 @@ import io.circe.syntax._
 import io.circe.generic.auto._
 import mx.cinvestav.Helpers
 import mx.cinvestav.Main.NodeContext
-import mx.cinvestav.commons.commands.CommandData
+import mx.cinvestav.commons.commands.{CommandData, Identifiers}
+import mx.cinvestav.commons.payloads.AddKey
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.CompressionUtils
-import mx.cinvestav.domain.{CommandId, NodeState, Payloads, Replica}
+import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads, Replica}
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import org.typelevel.log4cats.Logger
 
@@ -19,6 +20,42 @@ import java.net.URL
 class PassiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) extends CommandHandler [IO,Payloads.PassiveReplication]{
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
 
+
+  def sendMetadataToChord(payload:Payloads.PassiveReplication):IO[Unit ] = for {
+    currentState <- ctx.state.get
+    addKeyPayload = AddKey(id=payload.id,
+      key=payload.fileId,
+      value = payload.metadata.asJson.noSpaces,
+      experimentId = 0
+    )
+                      chordPublisher  <- ctx.utils.createPublisher(
+      exchangeName = ctx.config.poolId,
+      routingKey = currentState.chordRoutingKey
+    )
+                    addKeyCmd = CommandData[Json](Identifiers.ADD_KEY,addKeyPayload.asJson).asJson.noSpaces
+                    _ <- chordPublisher(addKeyCmd)
+  } yield ()
+
+  def propagateMetadata(payload:Payloads.PassiveReplication):IO[Unit] =for {
+
+    _ <- ctx.logger.debug(s"PROPAGATE_METADATA ${payload.id} ${payload.metadata.replicas.map(_.nodeId).mkString(",")}")
+    fileMetadata      = payload.metadata
+    exchangeName      = ctx.config.poolId
+    routingKey        = (nId:String) => s"$exchangeName.$nId.default"
+    addReplicaPayload =Payloads.AddReplicas(
+      id      = payload.id,
+      fileId  = payload.fileId,
+      replica =  fileMetadata.replicas,
+      experimentId = payload.experimentId
+    ).asJson
+    completedReplicasIds = payload.metadata.replicas.map(_.nodeId).filter(_!=ctx.config.nodeId)
+    addReplicasCmd       = CommandData[Json](CommandId.ADD_REPLICAS,addReplicaPayload).asJson.noSpaces
+    publishers        <- completedReplicasIds.traverse(nId => ctx.utils.fromNodeIdToPublisher(nId,exchangeName,routingKey(nId)))
+    _                 <- publishers.traverse(publisher => publisher.publish(addReplicasCmd))
+    _                 <- state.updateAndGet(s=>s.copy(metadata = s.metadata + (payload.fileId -> fileMetadata) ))
+    //        CHORD
+    _ <- sendMetadataToChord(payload)
+  } yield ()
 
   def handleAfterSaveFile(transferred:Long, payload:Payloads.PassiveReplication): IO[Unit] =
       for {
@@ -34,23 +71,9 @@ class PassiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(
       continueReplication = replicaCounter < totalOfReplicas
       newPayload          = payload.copy(metadata = fileMetadata,url = s"http://$ip/${payload.fileId}.$ext",lastNodeId = ctx.config.nodeId)
       replicasNodes       = fileMetadata.replicas.map(_.nodeId)
-      _                 <- if(continueReplication) ctx.helpers._passiveReplication(state,replicasNodes,newPayload)
-      else for {
-//        _ <- IO.unit
-        _ <- ctx.logger.debug(s"PROPAGATE_METADATA ${payload.id} ${payload.metadata.replicas.map(_.nodeId).mkString(",")}")
-        exchangeName      = ctx.config.poolId
-        routingKey        = (nId:String) => s"$exchangeName.$nId.default"
-        addReplicaPayload =Payloads.AddReplicas(
-          id      = payload.id,
-          fileId  = payload.fileId,
-          replica =  fileMetadata.replicas
-        ).asJson
-        completedReplicasIds = payload.metadata.replicas.map(_.nodeId)
-        addReplicasCmd       = CommandData[Json](CommandId.ADD_REPLICAS,addReplicaPayload).asJson.noSpaces
-        publishers        <- completedReplicasIds.traverse(nId => ctx.utils.fromNodeIdToPublisher(nId,exchangeName,routingKey(nId)))
-        _                 <- publishers.traverse(publisher => publisher.publish(addReplicasCmd))
-        _                 <- state.updateAndGet(s=>s.copy(metadata = s.metadata + (payload.fileId -> fileMetadata) ))
-      } yield ()
+      _                   <- if(continueReplication)
+                               ctx.helpers._passiveReplication(state,replicasNodes,newPayload)
+                             else propagateMetadata(newPayload)
     } yield ()
 
   override def handleRight(payload: Payloads.PassiveReplication): IO[Unit] = for {

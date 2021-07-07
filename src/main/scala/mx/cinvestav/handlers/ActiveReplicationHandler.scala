@@ -36,7 +36,13 @@ class ActiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(i
           _         <- state.update(s=>s.copy(metadata =s.metadata + (payload.fileId->fileMetadata ) ))
 //       Send replicas to balanced storage nodes
           publisher <- utils.fromNodeIdToPublisher(payload.leaderNodeId,config.poolId,s"${config.poolId}.${payload.leaderNodeId}.default")
-          activeReplicationDonePayload  = ActiveReplicationDone(id= payload.id,replica= replica,fileId = payload.fileId,transferred = value)
+          activeReplicationDonePayload  = ActiveReplicationDone(
+            id= payload.id,
+            replica= replica,
+            fileId = payload.fileId,
+            transferred = value,
+            experimentId = payload.experimentId
+          )
           cmd      = CommandData[Json](CommandId.ACTIVE_REPLICATION_DONE,activeReplicationDonePayload.asJson).asJson.noSpaces
           _         <- publisher.publish(cmd)
 

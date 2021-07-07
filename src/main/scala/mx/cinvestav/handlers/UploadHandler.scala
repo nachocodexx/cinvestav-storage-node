@@ -10,6 +10,10 @@ import mx.cinvestav.domain.Errors.{Failure, RFGreaterThanAR}
 import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, NodeState, Payloads}
 import mx.cinvestav.utils.Command
 import org.typelevel.log4cats.Logger
+import mx.cinvestav.commons.payloads.AddKey
+import io.circe.syntax._
+import io.circe.generic.auto._
+import mx.cinvestav.commons.commands.{CommandData, Identifiers}
 
 class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO, Payloads.UploadFile]{
 
@@ -31,20 +35,26 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
       ctx.logger.error("UNKNOWN_ERROR")
   }
 
+  def doPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
+      currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata.copy(replicas=Nil))))
+      _ <- ctx.helpers.buildPassiveReplication(payload,metadata,state)
+    } yield ()
+
+  def doActiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
+      currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
+      _ <- ctx.helpers.activeReplication(payload,metadata)
+    } yield ()
+
   def handleSaveAndCompressSuccess(payload:Payloads.UploadFile,metadata: FileMetadata): IO[Unit] = for {
     _ <- ctx.logger.debug(CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} " +s"${payload.replicationFactor} ${payload.experimentId}")
     currentState <- state.get
 //    Perform replication using a predefined strategy
        _           <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE)
-         for {
-         currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata.copy(replicas=Nil))))
-         _ <- ctx.helpers.buildPassiveReplication(payload,metadata,state)
-       } yield ()
-       else
-         for {
-           currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
-           _ <- ctx.helpers.activeReplication(payload,metadata,currentState)
-         } yield ()
+                         doPassiveReplication(payload,metadata)
+                     else
+                         doActiveReplication(payload,metadata)
+//                         SEND TO CHORD
+
     } yield ( )
 
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())

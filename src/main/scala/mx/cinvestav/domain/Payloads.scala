@@ -22,7 +22,8 @@ object Payloads {
                                     id:String,
                                     fileId:String,
                                     replica: Replica,
-                                    transferred:Long
+                                    transferred:Long,
+                                    experimentId:Int
                                   )
   case class ActiveReplication(
                           id:String,
@@ -31,17 +32,8 @@ object Payloads {
                               leaderNodeId:String,
                           userId:String,
                           url:String,
-                          metadata:FileMetadata
-//                          url:String,
-//                          originalFilename:String,
-//                          originalExtension:String,
-//                          originalSize:Long,
-//                          replicationFactor:Int,
-//                          compressionAlgorithm:String,
-//                          nodes:List[String],
-//                          experimentId:Int,
-//                          //                          New
-//                          replicationStrategy:String
+                          metadata:FileMetadata,
+                          experimentId:Int,
                         )
   case class PassiveReplication(
                                id:String,
@@ -50,10 +42,11 @@ object Payloads {
                                metadata: FileMetadata,
                                replicationFactor:Int,
                                url:String,
-                               lastNodeId:String
+                               lastNodeId:String,
+                               experimentId:Int
                                )
 
-  case class AddReplicas(id:String, fileId:String, replica: List[Replica])
+  case class AddReplicas(id:String, fileId:String, replica: List[Replica],experimentId:Int)
   case class Replication(
                           id:String,
                           fileId:String,

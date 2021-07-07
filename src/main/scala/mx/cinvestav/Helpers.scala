@@ -48,15 +48,18 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 //    _           <- if(maybeFileMetadata.isDefined) IO.unit else IO.unit
   } yield ()
 
-  def activeReplication(payload:Payloads.UploadFile, metadata: FileMetadata,currentState:NodeState): IO[Unit] = for {
-//    currentState <-
-     _         <- Logger[IO].info(s"ACTIVE_REPLICATION ${payload.id} ${payload.fileId}")
+  def activeReplication(payload:Payloads.UploadFile, metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+    currentState  <- ctx.state.get
+     _            <- Logger[IO].info(s"ACTIVE_REPLICATION ${payload.id} ${payload.fileId}")
      loadBalancer <-  currentState.loadBalancer.pure[IO]
      storageNodes <- currentState.storagesNodes.pure[IO]
      _            <- if(storageNodes.length < payload.replicationFactor)
                                 Logger[IO].error(RFGreaterThanAR().message)
               else for {
                 selectedStorageNodes <- loadBalancer.balanceMulti(storageNodes,rounds=currentState.replicationFactor).pure[IO]
+//                CHORD
+                _ <- ctx.state.update(s=>s.copy(activeReplicationCompletion = s.activeReplicationCompletion+(payload.fileId->selectedStorageNodes.length)))
+//
                 publishers <- selectedStorageNodes.traverse(nId =>
                   utils.fromNodeIdToPublisher(
                     nodeId       = nId,
@@ -71,7 +74,8 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
                     userId       = payload.userId,
                     fileId       = payload.fileId,
                     url          = s"http://${currentState.ip}/${payload.fileId}.$compressionExt",
-                    leaderNodeId = config.nodeId
+                    leaderNodeId = config.nodeId,
+                    experimentId = payload.experimentId
                   )
                 cmd      <- CommandData[Json](CommandId.ACTIVE_REPLICATION,_payload.asJson).pure[IO].map(_.asJson.noSpaces)
                 _        <- publishers.traverse{publisher=>
@@ -113,7 +117,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   }
 
 
-  def buildPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata,state: Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) = for {
+  def buildPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata,state: Ref[IO,NodeState])(implicit ctx:NodeContext[IO]): IO[Unit] = for {
     ip <- state.get.map(_.ip)
     ext = CompressionUtils.getExtensionByCompressionAlgorithm(payload.compressionAlgorithm)
     passiveRepPayload = Payloads.PassiveReplication(
@@ -123,7 +127,8 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     metadata =metadata,
     replicationFactor = payload.replicationFactor,
     url= s"http://$ip/${payload.fileId}.$ext",
-    lastNodeId = ctx.config.nodeId
+    lastNodeId = ctx.config.nodeId,
+    experimentId = payload.experimentId
     )
     _ <- _passiveReplication(state,Nil,passiveRepPayload)
   } yield ()

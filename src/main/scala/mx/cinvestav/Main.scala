@@ -98,7 +98,8 @@ object Main extends IOApp{
             availableResources  = config.storageNodes.length+1,
             replicationStrategy = config.replicationStrategy,
             freeStorageSpace    = rootFile.getFreeSpace,
-            usedStorageSpace    = rootFile.getTotalSpace - rootFile.getFreeSpace
+            usedStorageSpace    = rootFile.getTotalSpace - rootFile.getFreeSpace,
+            chordRoutingKey          = s"${config.poolId}.global.chord"
           )
           state           <- IO.ref(_initState)
           //        MAIN PROGRAM
