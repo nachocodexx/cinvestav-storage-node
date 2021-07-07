@@ -8,7 +8,7 @@ import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.ReplicationStrategies
 import mx.cinvestav.domain.Payloads.{ActiveReplication, ActiveReplicationDone, PassiveReplication}
-import mx.cinvestav.handlers.{ActiveReplicationDoneHandler, ActiveReplicationHandler, AddReplicaHandler, PassiveReplicationHandler, UploadHandler}
+import mx.cinvestav.handlers.{ActiveReplicationDoneHandler, ActiveReplicationHandler, AddReplicasHandler, DownloadFileHandler, PassiveReplicationHandler, UploadHandler}
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import mx.cinvestav.utils.RabbitMQUtils.dynamicRabbitMQConfig
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
@@ -35,7 +35,7 @@ import io.circe._,io.circe.generic.auto._,io.circe.parser._,io.circe.syntax._
 object Main extends IOApp{
   implicit val config: DefaultConfig                       = ConfigSource.default.loadOrThrow[DefaultConfig]
   val rabbitMQConfig: Fs2RabbitConfig                      = dynamicRabbitMQConfig(config.rabbitmq)
-  case class NodeContext[F[_]](config: DefaultConfig,logger: Logger[F],helpers: Helpers,utils: RabbitMQUtils[F])
+  case class NodeContext[F[_]](config: DefaultConfig,logger: Logger[F],helpers: Helpers,utils: RabbitMQUtils[F],state:Ref[IO,NodeState])
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
   def program(queueName:String=config.nodeId,state:Ref[IO,NodeState])(implicit utils: RabbitMQUtils[IO],H:Helpers,ctx:NodeContext[IO]):IO[Unit] =
@@ -46,14 +46,14 @@ object Main extends IOApp{
           command.commandId match {
             case Identifiers.NEW_COORDINATOR         => CommandHandlers.newCoordinator(command,state)
             case Identifiers.NEW_COORDINATOR_V2      => CommandHandlers.newCoordinatorV2(command,state)
-            case CommandId.DOWNLOAD_FILE             => CommandHandlers.downloadFile(command,state)
+            case CommandId.DOWNLOAD_FILE             => DownloadFileHandler(command)
             case CommandId.UPLOAD_FILE               => UploadHandler(command,state)
             case CommandId.PASSIVE_REPLICATION       => PassiveReplicationHandler(command,state)
 //
             case CommandId.ACTIVE_REPLICATION        => ActiveReplicationHandler(command,state)
             case CommandId.ACTIVE_REPLICATION_DONE   => ActiveReplicationDoneHandler(command,state)
 //
-            case CommandId.ADD_REPLICA               => AddReplicaHandler(command,state)
+            case CommandId.ADD_REPLICAS               => AddReplicasHandler(command,state)
             case Identifiers.START_HEARTBEAT         => CommandHandlers.startHeartbeat(command,state)
             case Identifiers.STOP_HEARTBEAT          => CommandHandlers.stopHeartbeat(command,state)
             case CommandId.RESET                     => CommandHandlers.reset(command,state)
@@ -88,7 +88,7 @@ object Main extends IOApp{
           heartbeatSignal <- SignallingRef[IO,Boolean](false)
 //
           rootFile        = new File("/")
-          _initState      <- NodeState(
+          _initState      = NodeState(
             status              = status.Up,
             heartbeatSignal     = heartbeatSignal,
             loadBalancer        = balancer.LoadBalancer(config.loadBalancer),
@@ -99,14 +99,14 @@ object Main extends IOApp{
             replicationStrategy = config.replicationStrategy,
             freeStorageSpace    = rootFile.getFreeSpace,
             usedStorageSpace    = rootFile.getTotalSpace - rootFile.getFreeSpace
-          ).pure[IO]
+          )
           state           <- IO.ref(_initState)
           //        MAIN PROGRAM
           mainQueueName   <- IO.pure(s"${config.poolId}-${config.nodeId}")
           _               <- initQueues(mainQueueName)
           _               <- Logger[IO].debug(s"[START STORAGE NODE] ${_initState}")
           helpers         = Helpers()
-          ctx             = NodeContext[IO](config,logger = unsafeLogger,helpers=helpers,utils = utils)
+          ctx             = NodeContext[IO](config,logger = unsafeLogger,helpers=helpers,utils = utils,state=state)
           _               <- program(mainQueueName,state)(utils,helpers,ctx)
         } yield ()
       }

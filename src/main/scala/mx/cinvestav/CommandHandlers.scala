@@ -213,7 +213,7 @@ object CommandHandlers {
         case Left(e) => e match {
           case Errors.DuplicatedReplica(fileId,_) =>
             Logger[IO].error(s"DUPLICATED_REPLICA $fileId")
-          case Errors.FileNotFound(filename,_) =>
+          case Errors.FileNotFound(filename) =>
             Logger[IO].error(s"FILE_NOT_FOUND $filename")
           case Errors.CompressionFail(message) =>
             Logger[IO].error(message)

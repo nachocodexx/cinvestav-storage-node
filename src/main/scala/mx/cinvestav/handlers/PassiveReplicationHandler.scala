@@ -20,38 +20,46 @@ class PassiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
 
 
-  def handleBeforeSaveFile(transferred:Long,payload:Payloads.PassiveReplication) =
+  def handleAfterSaveFile(transferred:Long, payload:Payloads.PassiveReplication): IO[Unit] =
       for {
+//        _
       timestamp           <- IO.realTime.map(_.toSeconds)
-      ip                  <- state.get.map(_.ip)
       replica             = Replica(ctx.config.nodeId,primary = false,0,timestamp)
       ext                 = CompressionUtils.getExtensionByCompressionAlgorithm(payload.metadata.compressionAlgorithm)
       fileMetadata        = payload.metadata.copy(replicas = payload.metadata.replicas :+ replica)
+      currentState        <- state.updateAndGet(s=>s.copy(metadata = s.metadata + (payload.fileId -> fileMetadata) ))
+      ip                  = currentState.ip
       replicaCounter      = fileMetadata.replicas.length
       totalOfReplicas     = payload.replicationFactor +1
       continueReplication = replicaCounter < totalOfReplicas
-//      addReplicaPayload   = Payloads.AddReplica(payload.id,payload.fileId,replica).asJson
-//      addReplicateCmd     = CommandData[Json](CommandId.ADD_REPLICA,addReplicaPayload).asJson.noSpaces
       newPayload          = payload.copy(metadata = fileMetadata,url = s"http://$ip/${payload.fileId}.$ext",lastNodeId = ctx.config.nodeId)
       replicasNodes       = fileMetadata.replicas.map(_.nodeId)
-      _                  <- state.updateAndGet(s=>s.copy(metadata = s.metadata + (payload.fileId -> fileMetadata) ))
-      lastNodePub        <- ctx.utils.fromNodeIdToPublisher(payload.lastNodeId,ctx.config.poolId,s"${ctx.config.poolId}.${payload.lastNodeId}.default")
-//      _                  <- lastNodePub.publish(addReplicateCmd)
-      _                 <- if(continueReplication) ctx.helpers._passiveReplication(state,replicasNodes,newPayload) else ctx.logger.debug("NO CONTINUE")
-
-      //    _                  <- ctx.logger.debug("REPLICATION COUNTER: "+replicaCounter)
-      //    _                  <- ctx.logger.debug("REPLICATION FACTOR: "+totalOfReplicas)
+      _                 <- if(continueReplication) ctx.helpers._passiveReplication(state,replicasNodes,newPayload)
+      else for {
+//        _ <- IO.unit
+        _ <- ctx.logger.debug(s"PROPAGATE_METADATA ${payload.id} ${payload.metadata.replicas.map(_.nodeId).mkString(",")}")
+        exchangeName      = ctx.config.poolId
+        routingKey        = (nId:String) => s"$exchangeName.$nId.default"
+        addReplicaPayload =Payloads.AddReplicas(
+          id      = payload.id,
+          fileId  = payload.fileId,
+          replica =  fileMetadata.replicas
+        ).asJson
+        completedReplicasIds = payload.metadata.replicas.map(_.nodeId)
+        addReplicasCmd       = CommandData[Json](CommandId.ADD_REPLICAS,addReplicaPayload).asJson.noSpaces
+        publishers        <- completedReplicasIds.traverse(nId => ctx.utils.fromNodeIdToPublisher(nId,exchangeName,routingKey(nId)))
+        _                 <- publishers.traverse(publisher => publisher.publish(addReplicasCmd))
+        _                 <- state.updateAndGet(s=>s.copy(metadata = s.metadata + (payload.fileId -> fileMetadata) ))
+      } yield ()
     } yield ()
 
   override def handleRight(payload: Payloads.PassiveReplication): IO[Unit] = for {
     _          <- ctx.logger.debug(CommandId.PASSIVE_REPLICATION+ s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.lastNodeId}")
     url        = new URL(payload.url)
-//    extension  = url.getPath.split("\\.").lastOption
     outputPath = s"${ctx.config.storagePath}${url.getPath}"
-//    _ <- ctx.logger.debug(extension.toString)
     _          <- ctx.helpers.downloadFileFormURL(payload.fileId,outputPath,url).value.flatMap {
       case Left(value) => ctx.logger.error(value.message)
-      case Right(value) => handleBeforeSaveFile(value,payload)
+      case Right(value) => handleAfterSaveFile(value,payload)
     }
   } yield ()
 

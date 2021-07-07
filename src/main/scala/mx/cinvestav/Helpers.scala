@@ -19,9 +19,7 @@ import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads, Replica}
 import mx.cinvestav.utils.RabbitMQUtils
 import org.typelevel.log4cats.Logger
-//import scodec.Attempt.Failure
-
-import scala.util.{Success, Try}
+import scala.util.Try
 //
 import io.circe.Json
 import io.circe.syntax._
@@ -36,13 +34,13 @@ import com.github.gekomad.scalacompress.DecompressionStats
 
 class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]){
 
-  def addReplica(fileId:String,replica: Replica,state:Ref[IO,NodeState]): IO[Unit] = for {
+  def addReplicas(fileId:String, newReplicas: List[Replica], state:Ref[IO,NodeState]): IO[Unit] = for {
     oldMetadata <- state.get.map(_.metadata)
     maybeFileMetadata = oldMetadata.get(fileId)
     _                 <- if(maybeFileMetadata.isDefined) for {
       _            <- IO.unit
       fileMetadata = maybeFileMetadata.get
-      replicas     = fileMetadata.replicas :+ replica
+      replicas     = Set.from(fileMetadata.replicas ++ newReplicas).toList
       newMetadata  = fileMetadata.copy(replicas = replicas )
       _            <- state.update(s=> s.copy(metadata =   oldMetadata.updated(fileId, newMetadata)   ))
     } yield ()
@@ -77,7 +75,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
                   )
                 cmd      <- CommandData[Json](CommandId.ACTIVE_REPLICATION,_payload.asJson).pure[IO].map(_.asJson.noSpaces)
                 _        <- publishers.traverse{publisher=>
-                  publisher.publish(cmd) *> Logger[IO].debug(s"SENT REPLICA TO ${publisher.nodeId} SUCCESSFULLY")
+                  publisher.publish(cmd) *> Logger[IO].info(s"ACTIVE_REPLICATION SENT TO ${publisher.nodeId}")
                 }
               } yield ()
   } yield ()
@@ -99,9 +97,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   def createFileMetadataE(payload: Payloads.UploadFile,file: File):EitherT[IO, Failure, FileMetadata] = {
       val fileMetadata:EitherT[IO,Failure,FileMetadata] = for {
         timestamp     <- EitherT(IO.realTime.map(x=>(x.toSeconds/1000L).asRight))
-        replica       <- EitherT(
-          IO.pure(Replica(config.nodeId,primary = true,0,timestamp).asRight)
-        )
+        replica       = Replica(config.nodeId,primary = true,0,timestamp)
         fileMetadata  <- EitherT[IO,Failure,FileMetadata](
           FileMetadata(
             originalName = payload.filename,
@@ -109,7 +105,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
             compressionAlgorithm = "lz4",
             size = file.length(),
             replicas = replica::Nil
-//            compressionExt = "lz4"
+            //            compressionExt = "lz4"
           ).asRight[Failure].pure[IO]
         )
       } yield fileMetadata

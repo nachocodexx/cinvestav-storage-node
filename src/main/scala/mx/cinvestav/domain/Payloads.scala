@@ -1,7 +1,8 @@
 package mx.cinvestav.domain
 
 object Payloads {
-  case class DownloadFile(fileId:String,replyTo:String)
+  case class FileFound(id:String,fileId:String,url:String,compressionAlgorithm:String)
+  case class DownloadFile(id:String,fileId:String,exchangeName:String,replyTo:String)
   case class UploadFile(
                          id:String,
                          fileId:String,
@@ -52,7 +53,7 @@ object Payloads {
                                lastNodeId:String
                                )
 
-  case class AddReplica(id:String,fileId:String,replica: Replica)
+  case class AddReplicas(id:String, fileId:String, replica: List[Replica])
   case class Replication(
                           id:String,
                           fileId:String,

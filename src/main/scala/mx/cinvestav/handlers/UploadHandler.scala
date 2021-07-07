@@ -2,19 +2,10 @@ package mx.cinvestav.handlers
 import cats.data.EitherT
 import cats.implicits._
 import cats.effect._
-import io.circe.Decoder.Result
 import io.circe.{DecodingFailure, Json}
 import mx.cinvestav.Main.{NodeContext, unsafeLogger}
-//import io.circe.generic.aut
 import io.circe.generic.auto._
-import io.circe.syntax._
-import mx.cinvestav.commons.commands.CommandData
-import mx.cinvestav.config.RabbitMQConfig
 import mx.cinvestav.domain.Constants.ReplicationStrategies
-import mx.cinvestav.utils.RabbitMQUtils
-//import mx.cinvestav.CommandHandlers.saveAndCompress
-import mx.cinvestav.Helpers
-import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Errors.{Failure, RFGreaterThanAR}
 import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, NodeState, Payloads}
 import mx.cinvestav.utils.Command
@@ -30,8 +21,8 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
   def handleSaveAndCompressError(failure: Failure): IO[Unit] =  failure match {
     case Errors.DuplicatedReplica(fileId,_) =>
       ctx.logger.error(s"DUPLICATED_REPLICA $fileId")
-    case Errors.FileNotFound(filename,_) =>
-      ctx.logger.error(s"FILE_NOT_FOUND $filename")
+    case e@Errors.FileNotFound(filename) =>
+      ctx.logger.error(e.message)
     case Errors.CompressionFail(message) =>
       ctx.logger.error(message)
     case RFGreaterThanAR(message) =>
@@ -41,15 +32,24 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
   }
 
   def handleSaveAndCompressSuccess(payload:Payloads.UploadFile,metadata: FileMetadata): IO[Unit] = for {
-      currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
-       _           <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE)   ctx.helpers.buildPassiveReplication(payload,metadata,state)
-       else ctx.helpers.activeReplication(payload,metadata,currentState)
+    _ <- ctx.logger.debug(CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} " +s"${payload.replicationFactor} ${payload.experimentId}")
+    currentState <- state.get
+//    Perform replication using a predefined strategy
+       _           <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE)
+         for {
+         currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata.copy(replicas=Nil))))
+         _ <- ctx.helpers.buildPassiveReplication(payload,metadata,state)
+       } yield ()
+       else
+         for {
+           currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
+           _ <- ctx.helpers.activeReplication(payload,metadata,currentState)
+         } yield ()
     } yield ( )
 
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
   override def handleRight(payload: Payloads.UploadFile): IO[Unit] = {
     val maybeSaveAndCompress:EitherT[IO,Failure,FileMetadata] = for {
-      _                <- logE(payload)
       currentState     <- EitherT(state.get.map(_.asRight[Failure]))
 
       metadata = for {

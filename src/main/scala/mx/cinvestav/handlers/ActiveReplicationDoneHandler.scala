@@ -17,13 +17,13 @@ class ActiveReplicationDoneHandler(command: Command[Json],state:Ref[IO,NodeState
 
   override def handleRight(payload: Payloads.ActiveReplicationDone): IO[Unit] = for {
     _                 <- Logger[IO].debug(s"ACTIVE_REPLICATION_DONE ${payload.id} ${payload.replica.nodeId}")
-    _                 <- H.addReplica(payload.fileId,payload.replica,state)
+    _                 <- H.addReplicas(payload.fileId,payload.replica::Nil,state)
     currentState      <- state.get
     nodeIds           <- currentState.storagesNodes.filter(_!= payload.replica.nodeId).pure[IO]
     routingKey        = (nodeId:String) => s"${config.poolId}.$nodeId.default"
     publishers        <- nodeIds.traverse(nodeId => utils.fromNodeIdToPublisher(nodeId,config.poolId,routingKey(nodeId)))
-    _payload              = Payloads.AddReplica(payload.id,payload.fileId,payload.replica).asJson
-    cmd                = CommandData[Json](CommandId.ADD_REPLICA,_payload).asJson.noSpaces
+    _payload          = Payloads.AddReplicas(payload.id,payload.fileId,payload.replica::Nil).asJson
+    cmd               = CommandData[Json](CommandId.ADD_REPLICAS,_payload).asJson.noSpaces
     _                 <- publishers.traverse(_.publish(cmd))
   } yield ()
 
