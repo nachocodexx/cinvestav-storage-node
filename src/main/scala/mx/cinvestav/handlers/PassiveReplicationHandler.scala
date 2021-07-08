@@ -22,23 +22,19 @@ class PassiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(
 
 
   def sendMetadataToChord(payload:Payloads.PassiveReplication):IO[Unit ] = for {
-    currentState <- ctx.state.get
+    _             <- IO.unit
     addKeyPayload = AddKey(id=payload.id,
       key=payload.fileId,
       value = payload.metadata.asJson.noSpaces,
-      experimentId = 0
+      experimentId = payload.experimentId
     )
-                      chordPublisher  <- ctx.utils.createPublisher(
-      exchangeName = ctx.config.poolId,
-      routingKey = currentState.chordRoutingKey
-    )
-                    addKeyCmd = CommandData[Json](Identifiers.ADD_KEY,addKeyPayload.asJson).asJson.noSpaces
-                    _ <- chordPublisher(addKeyCmd)
+    addKeyCmd     = CommandData[Json](Identifiers.ADD_KEY,addKeyPayload.asJson)
+    _             <- ctx.helpers.sendMetadataToChord(addKeyCmd)
   } yield ()
 
   def propagateMetadata(payload:Payloads.PassiveReplication):IO[Unit] =for {
 
-    _ <- ctx.logger.debug(s"PROPAGATE_METADATA ${payload.id} ${payload.metadata.replicas.map(_.nodeId).mkString(",")}")
+    _ <- ctx.logger.debug(s"PROPAGATE_METADATA ${payload.id} ${payload.metadata.replicas.map(_.nodeId).mkString(",")} ${payload.experimentId}")
     fileMetadata      = payload.metadata
     exchangeName      = ctx.config.poolId
     routingKey        = (nId:String) => s"$exchangeName.$nId.default"
@@ -72,12 +68,12 @@ class PassiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(
       newPayload          = payload.copy(metadata = fileMetadata,url = s"http://$ip/${payload.fileId}.$ext",lastNodeId = ctx.config.nodeId)
       replicasNodes       = fileMetadata.replicas.map(_.nodeId)
       _                   <- if(continueReplication)
-                               ctx.helpers._passiveReplication(state,replicasNodes,newPayload)
+                               ctx.helpers._passiveReplication(replicasNodes,newPayload)
                              else propagateMetadata(newPayload)
     } yield ()
 
   override def handleRight(payload: Payloads.PassiveReplication): IO[Unit] = for {
-    _          <- ctx.logger.debug(CommandId.PASSIVE_REPLICATION+ s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.lastNodeId}")
+    _          <- ctx.logger.debug(CommandId.PASSIVE_REPLICATION+ s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.lastNodeId} ${payload.experimentId}")
     url        = new URL(payload.url)
     outputPath = s"${ctx.config.storagePath}${url.getPath}"
     _          <- ctx.helpers.downloadFileFormURL(payload.fileId,outputPath,url).value.flatMap {

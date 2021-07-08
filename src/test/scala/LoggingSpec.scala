@@ -10,10 +10,11 @@ class LoggingSpec extends munit .CatsEffectSuite {
   implicit def unsafeLogger = Slf4jLogger.getLogger[IO]
   test("URL"){
     val url = new URL("http://10.0.0.0/filename.lz4")
+    val op = Option.unless("".isEmpty)("")
     val replicas = List(1,2,3)
     val newReplicas =List(1,2,3,4)
     val reps = Set.from(replicas++newReplicas)
-    println(reps)
+    println(op,"".isEmpty)
 //    println(url.getPath)
   }
   test("Basic") {

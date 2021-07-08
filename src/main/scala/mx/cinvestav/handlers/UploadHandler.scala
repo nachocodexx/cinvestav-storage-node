@@ -36,9 +36,9 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
   }
 
   def doPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
-      currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata.copy(replicas=Nil))))
-      _ <- ctx.helpers.buildPassiveReplication(payload,metadata,state)
-    } yield ()
+    _  <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata.copy(replicas=Nil))))
+    _  <- ctx.helpers.buildPassiveReplication(payload,metadata)
+  } yield ()
 
   def doActiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
       currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))

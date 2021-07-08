@@ -12,13 +12,15 @@ import fs2.concurrent.SignallingRef
 import mx.cinvestav.Main.NodeContext
 import mx.cinvestav.commons.balancer.LoadBalancer
 import mx.cinvestav.domain.Errors.{CompressionFail, DecompressionFail, DuplicatedReplica, Failure, FileNotFound, RFGreaterThanAR}
-import mx.cinvestav.commons.commands.CommandData
+import mx.cinvestav.commons.commands.{CommandData, Identifiers}
 import mx.cinvestav.commons.payloads
+import mx.cinvestav.commons.payloads.AddKey
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.CompressionUtils
-import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads, Replica}
+import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads,Replica}
 import mx.cinvestav.utils.RabbitMQUtils
 import org.typelevel.log4cats.Logger
+
 import scala.util.Try
 //
 import io.circe.Json
@@ -34,6 +36,18 @@ import com.github.gekomad.scalacompress.DecompressionStats
 
 class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]){
 
+  def replyTo(exchangeName:String,replyTo:String,cmd:CommandData[Json])(implicit ctx:NodeContext[IO]):IO[Unit] = for {
+    _ <- IO.unit
+    maybeExchangeName = Option.unless(exchangeName.isEmpty)(exchangeName)
+    maybeReplyTo      = Option.unless(replyTo.isEmpty)(replyTo)
+    _ <- maybeExchangeName.mproduct(_ => maybeReplyTo) match {
+      case Some(value) =>for {
+        publisher <- ctx.utils.createPublisher(value._1,value._2)
+        _        <- publisher(cmd.asJson.noSpaces)
+      } yield ()
+      case None => IO.unit
+    }
+  }  yield ()
   def addReplicas(fileId:String, newReplicas: List[Replica], state:Ref[IO,NodeState]): IO[Unit] = for {
     oldMetadata <- state.get.map(_.metadata)
     maybeFileMetadata = oldMetadata.get(fileId)
@@ -50,7 +64,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 
   def activeReplication(payload:Payloads.UploadFile, metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
     currentState  <- ctx.state.get
-     _            <- Logger[IO].info(s"ACTIVE_REPLICATION ${payload.id} ${payload.fileId}")
+//     _            <- Logger[IO].info(s"ACTIVE_REPLICATION ${payload.id} ${payload.fileId} ${payload.experimentId}")
      loadBalancer <-  currentState.loadBalancer.pure[IO]
      storageNodes <- currentState.storagesNodes.pure[IO]
      _            <- if(storageNodes.length < payload.replicationFactor)
@@ -77,9 +91,9 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
                     leaderNodeId = config.nodeId,
                     experimentId = payload.experimentId
                   )
-                cmd      <- CommandData[Json](CommandId.ACTIVE_REPLICATION,_payload.asJson).pure[IO].map(_.asJson.noSpaces)
+                cmd      = CommandData[Json](CommandId.ACTIVE_REPLICATION,_payload.asJson).asJson.noSpaces
                 _        <- publishers.traverse{publisher=>
-                  publisher.publish(cmd) *> Logger[IO].info(s"ACTIVE_REPLICATION SENT TO ${publisher.nodeId}")
+                  publisher.publish(cmd) *> Logger[IO].info(s"ACTIVE_REPLICATION ${payload.id} ${publisher.nodeId} ${payload.experimentId}")
                 }
               } yield ()
   } yield ()
@@ -117,8 +131,8 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   }
 
 
-  def buildPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata,state: Ref[IO,NodeState])(implicit ctx:NodeContext[IO]): IO[Unit] = for {
-    ip <- state.get.map(_.ip)
+  def buildPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+    ip <- ctx.state.get.map(_.ip)
     ext = CompressionUtils.getExtensionByCompressionAlgorithm(payload.compressionAlgorithm)
     passiveRepPayload = Payloads.PassiveReplication(
     id=payload.id,
@@ -130,10 +144,10 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     lastNodeId = ctx.config.nodeId,
     experimentId = payload.experimentId
     )
-    _ <- _passiveReplication(state,Nil,passiveRepPayload)
+    _ <- _passiveReplication(Nil,passiveRepPayload)
   } yield ()
-  def _passiveReplication(state:Ref[IO,NodeState],replicaNodes:List[String],newPayload:Payloads.PassiveReplication)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
-    currentState  <- state.get
+  def _passiveReplication(replicaNodes:List[String],newPayload:Payloads.PassiveReplication)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+    currentState   <- ctx.state.get
     lb             =  currentState.loadBalancer
     storageNodes   = currentState.storagesNodes
     availableNodes = storageNodes.toSet.diff(replicaNodes.toSet).toList
@@ -141,24 +155,24 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     nextNodeId     <- lb.balance(availableNodes).pure[IO]
     publisher      <- utils.fromNodeIdToPublisher(nextNodeId,config.poolId,s"${config.poolId}.$nextNodeId.default")
     _              <- publisher.publish(cmd)
-    _              <- ctx.logger.debug(s"CONTINUE_PASSIVE_REPLICATION ${newPayload.id} $nextNodeId")
+    _              <- ctx.logger.debug(s"CONTINUE_PASSIVE_REPLICATION ${newPayload.id} $nextNodeId ${newPayload.experimentId}")
 
   } yield ()
 
-  def passiveReplication(currentState:NodeState, payload: Payloads.Replication): IO[Unit] = for {
-    lb             <-  currentState.loadBalancer.pure[IO]
-    storageNodes   <- currentState.storagesNodes.pure[IO]
-    availableNodes <- storageNodes.toSet.diff(payload.nodes.filter(_!=config.nodeId).toSet).toList.pure[IO]
+//  def passiveReplication(currentState:NodeState, payload: Payloads.Replication): IO[Unit] = for {
+//    lb             <-  currentState.loadBalancer.pure[IO]
+//    storageNodes   <- currentState.storagesNodes.pure[IO]
+//    availableNodes <- storageNodes.toSet.diff(payload.nodes.filter(_!=config.nodeId).toSet).toList.pure[IO]
+////
+//    nodeId         <- lb.balance(availableNodes).pure[IO]
+//    publisher      <- utils.fromNodeIdToPublisher(nodeId,config.poolId,s"${config.poolId}.$nodeId.default")
+//    cmd            <- CommandData[Json](CommandId.REPLICATION,payload.asJson).pure[IO]
+//    _              <- publisher.publish(cmd.asJson.noSpaces)
+//    _              <- Logger[IO].debug(s"SENT_REPLICATION_CMD ${payload.id} $nodeId ${payload.experimentId}")
 //
-    nodeId         <- lb.balance(availableNodes).pure[IO]
-    publisher      <- utils.fromNodeIdToPublisher(nodeId,config.poolId,s"${config.poolId}.$nodeId.default")
-    cmd            <- CommandData[Json](CommandId.REPLICATION,payload.asJson).pure[IO]
-    _              <- publisher.publish(cmd.asJson.noSpaces)
-    _              <- Logger[IO].debug(s"SENT_REPLICATION_CMD ${payload.id} $nodeId ${payload.experimentId}")
-
-  } yield ()
-
-
+//  } yield ()
+//
+//
 
 
   def _startHeart(heartbeatSignal:SignallingRef[IO,Boolean]): IO[Unit] =  for {
@@ -228,20 +242,20 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       file          <- EitherT.fromEither[IO](Right(new File(filePath)))
     } yield file
   }
-  def saveReplica(payload:Payloads.Replication): EitherT[IO, Failure, Unit] = for {
-    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_INIT ${payload.id} ${payload.fileId} " +
-      s"${payload.experimentId}")
-    completeUrl   <- EitherT.fromEither[IO](s"${payload.url}/${payload.fileId}.${payload.extension}".asRight)
-    website       =   new URL(completeUrl)
-    rbc           <- EitherT.fromEither[IO](newChannelE(payload.fileId,website))
-    filePath      = s"${config.storagePath}/${payload.fileId}.${payload.extension}"
-    fos           = new FileOutputStream(filePath)
-    transferred   <- transferE(payload.fileId,fos,rbc)
-    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_DONE ${payload.id} ${payload.fileId} " +
-      s"$transferred ${payload.experimentId}")
-//    file          <- EitherT.fromEither[IO](Right(new File(filePath)))
-  } yield ()
-
+//  def saveReplica(payload:Payloads.Replication): EitherT[IO, Failure, Unit] = for {
+//    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_INIT ${payload.id} ${payload.fileId} " +
+//      s"${payload.experimentId}")
+//    completeUrl   <- EitherT.fromEither[IO](s"${payload.url}/${payload.fileId}.${payload.extension}".asRight)
+//    website       =   new URL(completeUrl)
+//    rbc           <- EitherT.fromEither[IO](newChannelE(payload.fileId,website))
+//    filePath      = s"${config.storagePath}/${payload.fileId}.${payload.extension}"
+//    fos           = new FileOutputStream(filePath)
+//    transferred   <- transferE(payload.fileId,fos,rbc)
+//    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_DONE ${payload.id} ${payload.fileId} " +
+//      s"$transferred ${payload.experimentId}")
+////    file          <- EitherT.fromEither[IO](Right(new File(filePath)))
+//  } yield ()
+//
 
   def decompressE(src:String,destination:String): Either[Failure, DecompressionStats] = {
     Either.fromTry(lz4Decompress(src, destination))
@@ -266,6 +280,21 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       _        <- IO.delay(fos.getChannel.transferFrom(rbc,position,Long.MaxValue))
       file     <- IO.pure(new File(filePath))
     } yield  file
+
+  def sendMetadataToChord(cmd:CommandData[Json])(implicit ctx:NodeContext[IO]):IO[Unit ] = for {
+    currentState <- ctx.state.get
+//    addKeyPayload = AddKey(id=payload.id,
+//      key=payload.fileId,
+//      value = payload.metadata.asJson.noSpaces,
+//      experimentId = 0
+//    )
+    chordPublisher  <- ctx.utils.createPublisher(
+      exchangeName = ctx.config.poolId,
+      routingKey = currentState.chordRoutingKey
+    )
+//    addKeyCmd = CommandData[Json](Identifiers.ADD_KEY,addKeyPayload.asJson).asJson.noSpaces
+    _ <- chordPublisher(cmd.asJson.noSpaces)
+  } yield ()
 }
 
 object Helpers {

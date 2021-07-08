@@ -47,22 +47,25 @@ object Payloads {
                                )
 
   case class AddReplicas(id:String, fileId:String, replica: List[Replica],experimentId:Int)
-  case class Replication(
-                          id:String,
-                          fileId:String,
-                          extension:String,
-                          userId:String,
-                          url:String,
-                          originalFilename:String,
-                          originalExtension:String,
-                          originalSize:Long,
-                          replicationFactor:Int,
-                          compressionAlgorithm:String,
-                          nodes:List[String],
-                          experimentId:Int,
-//                          New
-                          replicationStrategy:String
-                        )
+
+
+
+//  case class Replication(
+//                          id:String,
+//                          fileId:String,
+//                          extension:String,
+//                          userId:String,
+//                          url:String,
+//                          originalFilename:String,
+//                          originalExtension:String,
+//                          originalSize:Long,
+//                          replicationFactor:Int,
+//                          compressionAlgorithm:String,
+//                          nodes:List[String],
+//                          experimentId:Int,
+////                          New
+//                          replicationStrategy:String
+//                        )
 
 
 //  case class NewCoordinator(prev:String,current:String)
