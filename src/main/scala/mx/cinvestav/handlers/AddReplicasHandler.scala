@@ -17,7 +17,7 @@ class AddReplicasHandler(command: Command[Json], state:Ref[IO,NodeState])(implic
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
 
   override def handleRight(payload: AddReplicas): IO[Unit] = for {
-    _ <- ctx.logger.debug(CommandId.ADD_REPLICAS+s" ${payload.id} ${payload.fileId}")
+    _ <- ctx.logger.debug(CommandId.ADD_REPLICAS+s" ${payload.id} ${payload.fileId} ${payload.experimentId}")
     _ <- ctx.helpers.addReplicas(payload.fileId,payload.replica,state)
   } yield ()
 

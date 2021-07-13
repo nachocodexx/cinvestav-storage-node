@@ -16,6 +16,4 @@ object CommandId {
   final val PASSIVE_REPLICATION       = "PASSIVE_REPLICATION"
   final val ADD_REPLICAS               = "ADD_REPLICAS"
   final val RESET                     = "RESET"
-//  final val NEW_COORDINATOR = "NEW_COORDINATOR"
-//  final val COLLOCATION = "COLLOCATION"
 }

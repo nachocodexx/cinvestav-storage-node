@@ -10,7 +10,8 @@ import mx.cinvestav.commons.commands.{CommandData, Identifiers}
 import mx.cinvestav.commons.payloads
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Errors.FileNotFound
-import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads, Replica}
+import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
+import mx.cinvestav.commons.storage.{Replica,FileMetadata}
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import org.typelevel.log4cats.Logger
 
@@ -30,7 +31,7 @@ class ActiveReplicationDoneHandler(command: Command[Json],state:Ref[IO,NodeState
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
 
   override def handleRight(payload: Payloads.ActiveReplicationDone): IO[Unit] = for {
-    _                 <- ctx.logger.debug(s"ACTIVE_REPLICATION_DONE ${payload.id} ${payload.replica.nodeId}")
+    _                 <- ctx.logger.debug(s"ACTIVE_REPLICATION_DONE ${payload.id} ${payload.replica.nodeId} ${payload.experimentId}")
     _                 <- ctx.helpers.addReplicas(payload.fileId,payload.replica::Nil,state)
     //    Propagate metadata
     currentState      <- ctx.state.updateAndGet(s=>s.copy(

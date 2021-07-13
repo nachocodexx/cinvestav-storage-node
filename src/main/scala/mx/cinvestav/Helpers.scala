@@ -17,7 +17,8 @@ import mx.cinvestav.commons.payloads
 import mx.cinvestav.commons.payloads.AddKey
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.CompressionUtils
-import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads,Replica}
+import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
+import mx.cinvestav.commons.storage.{Replica,FileMetadata}
 import mx.cinvestav.utils.RabbitMQUtils
 import org.typelevel.log4cats.Logger
 
@@ -225,6 +226,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 //    _ <- url.getPath
     transferred   <- transferE(fileId,fos,rbc)
   } yield transferred
+
   def saveFileE(payload:Payloads.UploadFile): EitherT[IO,Failure,File] = {
     for {
       _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_INIT ${payload.id} ${payload.fileId} " +

@@ -8,7 +8,8 @@ import fs2.concurrent.SignallingRef
 import mx.cinvestav.commons.status
 import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.domain.Errors.{DuplicatedReplica, Failure, RFGreaterThanAR}
-import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, Replica}
+import mx.cinvestav.domain.{CommandId, Errors}
+import mx.cinvestav.commons.storage.{Replica,FileMetadata}
 
 import java.io.File
 import java.net.InetAddress
@@ -52,7 +53,8 @@ object CommandHandlers {
       replicationStrategy =  config.replicationStrategy,
       freeStorageSpace    = rootFile.getFreeSpace,
       usedStorageSpace    =  rootFile.getTotalSpace - rootFile.getFreeSpace,
-      chordRoutingKey          = s"${config.poolId}.global.chord"
+      chordRoutingKey     = s"${config.poolId}.global.chord",
+      metadata            = Map.empty[String,FileMetadata]
     ).pure[IO]
     _  <- state.update(_=>_initState)
     _ <- IO.pure(cmd!)

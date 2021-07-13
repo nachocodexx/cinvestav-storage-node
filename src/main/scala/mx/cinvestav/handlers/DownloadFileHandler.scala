@@ -3,32 +3,34 @@ import cats.implicits._
 import cats.effect._
 import io.circe.{DecodingFailure, Json}
 import mx.cinvestav.Main.NodeContext
-import mx.cinvestav.domain.{CommandId, Payloads}
+import mx.cinvestav.domain.CommandId
 import io.circe.syntax._
 import io.circe.generic.auto._
 import mx.cinvestav.commons.commands.CommandData
 import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.utils.Command
 import mx.cinvestav.domain.Errors
-import mx.cinvestav.domain.Payloads.FileFound
+import mx.cinvestav.commons.payloads.{FileFound,DownloadFile}
 
-class DownloadFileHandler(command:Command[Json])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO,Payloads.DownloadFile]{
+class DownloadFileHandler(command:Command[Json])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO,DownloadFile]{
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
 
 
-  override def handleRight(payload: Payloads.DownloadFile): IO[Unit] = for {
+  override def handleRight(payload: DownloadFile): IO[Unit] = for {
     currentState <- ctx.state.get
     fileMetadata = currentState.metadata.get(payload.fileId)
     _            <- fileMetadata match {
       case Some(value) => for {
-        _          <- ctx.logger.debug(s"${CommandId.DOWNLOAD_FILE} ${payload.id} ${payload.fileId}")
+        _          <- ctx.logger.debug(s"${CommandId.DOWNLOAD_FILE} ${payload.id} ${payload.fileId} ${value.size} ${payload.experimentId}")
         ext        = CompressionUtils.getExtensionByCompressionAlgorithm(value.compressionAlgorithm)
         url        = s"http://${currentState.ip}/${payload.fileId}.$ext"
+        _ <- IO.println(value.size)
         cmdPayload = FileFound(
           id = payload.id,
           fileId= payload.fileId,
           url = url,
-          compressionAlgorithm = value.compressionAlgorithm
+          compressionAlgorithm = value.compressionAlgorithm,
+          experimentId = payload.experimentId
         ).asJson
         cmd        = CommandData[Json](CommandId.FILE_FOUND,cmdPayload)
         _          <- ctx.helpers.replyTo(payload.exchangeName,payload.replyTo,cmd)
@@ -37,7 +39,7 @@ class DownloadFileHandler(command:Command[Json])(implicit ctx:NodeContext[IO]) e
     }
   } yield ()
 
-  override def handle(): IO[Unit] = handler(command.payload.as[Payloads.DownloadFile])
+  override def handle(): IO[Unit] = handler(command.payload.as[DownloadFile])
 }
 object DownloadFileHandler {
   def apply(command: Command[Json])(implicit ctx:NodeContext[IO]): IO[Unit] =

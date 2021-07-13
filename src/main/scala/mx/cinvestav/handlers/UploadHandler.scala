@@ -7,13 +7,12 @@ import mx.cinvestav.Main.{NodeContext, unsafeLogger}
 import io.circe.generic.auto._
 import mx.cinvestav.domain.Constants.ReplicationStrategies
 import mx.cinvestav.domain.Errors.{Failure, RFGreaterThanAR}
-import mx.cinvestav.domain.{CommandId, Errors, FileMetadata, NodeState, Payloads}
+import mx.cinvestav.domain.{CommandId, Errors, NodeState, Payloads}
+import mx.cinvestav.commons.storage.FileMetadata
 import mx.cinvestav.utils.Command
 import org.typelevel.log4cats.Logger
-import mx.cinvestav.commons.payloads.AddKey
 import io.circe.syntax._
 import io.circe.generic.auto._
-import mx.cinvestav.commons.commands.{CommandData, Identifiers}
 
 class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO, Payloads.UploadFile]{
 

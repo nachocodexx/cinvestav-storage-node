@@ -4,14 +4,13 @@ import cats.effect._
 import io.circe.{DecodingFailure, Json}
 import io.circe.syntax._
 import io.circe.generic.auto._
-import mx.cinvestav.Helpers
 import mx.cinvestav.Main.NodeContext
 import mx.cinvestav.commons.commands.{CommandData, Identifiers}
 import mx.cinvestav.commons.payloads.AddKey
-import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.CompressionUtils
-import mx.cinvestav.domain.{CommandId, FileMetadata, NodeState, Payloads, Replica}
-import mx.cinvestav.utils.{Command, RabbitMQUtils}
+import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
+import mx.cinvestav.commons.storage.Replica
+import mx.cinvestav.utils.Command
 import org.typelevel.log4cats.Logger
 
 import java.net.URL

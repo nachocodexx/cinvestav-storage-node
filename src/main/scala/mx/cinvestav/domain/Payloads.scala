@@ -1,4 +1,5 @@
 package mx.cinvestav.domain
+import mx.cinvestav.commons.storage.{Replica,FileMetadata}
 
 object Payloads {
   case class FileFound(id:String,fileId:String,url:String,compressionAlgorithm:String)

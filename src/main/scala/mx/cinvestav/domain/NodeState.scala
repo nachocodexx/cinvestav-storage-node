@@ -3,16 +3,7 @@ import cats.effect.IO
 import fs2.concurrent.SignallingRef
 import mx.cinvestav.commons.status.Status
 import mx.cinvestav.commons.balancer
-
-case class Replica(nodeId:String, primary:Boolean, version:Int,timestamp:Long)
-case class FileMetadata(
-                         originalName:String,
-                         originalExtension:String,
-                         size:Long,
-//                         compressionExt:String,
-                         compressionAlgorithm:String,
-                         replicas:List[Replica]
-                       )
+import mx.cinvestav.commons.storage.{Replica,FileMetadata}
 
 
 case class NodeState(

@@ -46,14 +46,14 @@ object Main extends IOApp{
           command.commandId match {
             case Identifiers.NEW_COORDINATOR         => CommandHandlers.newCoordinator(command,state)
             case Identifiers.NEW_COORDINATOR_V2      => CommandHandlers.newCoordinatorV2(command,state)
-            case CommandId.DOWNLOAD_FILE             => DownloadFileHandler(command)
-            case CommandId.UPLOAD_FILE               => UploadHandler(command,state)
+            case Identifiers.DOWNLOAD_FILE           => DownloadFileHandler(command)
+            case Identifiers.UPLOAD_FILE             => UploadHandler(command,state)
             case CommandId.PASSIVE_REPLICATION       => PassiveReplicationHandler(command,state)
 //
             case CommandId.ACTIVE_REPLICATION        => ActiveReplicationHandler(command,state)
             case CommandId.ACTIVE_REPLICATION_DONE   => ActiveReplicationDoneHandler(command,state)
 //
-            case CommandId.ADD_REPLICAS               => AddReplicasHandler(command,state)
+            case CommandId.ADD_REPLICAS              => AddReplicasHandler(command,state)
             case Identifiers.START_HEARTBEAT         => CommandHandlers.startHeartbeat(command,state)
             case Identifiers.STOP_HEARTBEAT          => CommandHandlers.stopHeartbeat(command,state)
             case CommandId.RESET                     => CommandHandlers.reset(command,state)

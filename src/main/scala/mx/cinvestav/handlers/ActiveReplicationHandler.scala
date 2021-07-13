@@ -8,7 +8,8 @@ import mx.cinvestav.Helpers
 import mx.cinvestav.commons.commands.CommandData
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Payloads.ActiveReplicationDone
-import mx.cinvestav.domain.{CommandId, NodeState, Payloads, Replica}
+import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
+import mx.cinvestav.commons.storage.Replica
 import mx.cinvestav.utils.{Command, RabbitMQUtils}
 import org.typelevel.log4cats.Logger
 
@@ -19,7 +20,7 @@ class ActiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(i
   override def handleLeft(df: DecodingFailure): IO[Unit] = Logger[IO].error(df.message)
 
   def log(payload:Payloads.ActiveReplication):IO[Unit] =
-    Logger[IO].debug(CommandId.ACTIVE_REPLICATION+s" ${payload.id} ${payload.fileId}")
+    Logger[IO].debug(CommandId.ACTIVE_REPLICATION+s" ${payload.id} ${payload.fileId} ${payload.experimentId}")
   override def handleRight(payload: Payloads.ActiveReplication): IO[Unit] = {
     for {
       _        <- log(payload)
