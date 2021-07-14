@@ -71,7 +71,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
      _            <- if(storageNodes.length < payload.replicationFactor)
                                 Logger[IO].error(RFGreaterThanAR().message)
               else for {
-                selectedStorageNodes <- loadBalancer.balanceMulti(storageNodes,rounds=currentState.replicationFactor).pure[IO]
+                selectedStorageNodes <- loadBalancer.balanceMulti(storageNodes,rounds=payload.replicationFactor).pure[IO]
 //                CHORD
                 _ <- ctx.state.update(s=>s.copy(activeReplicationCompletion = s.activeReplicationCompletion+(payload.fileId->selectedStorageNodes.length)))
 //
