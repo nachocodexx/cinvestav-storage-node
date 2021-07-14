@@ -9,14 +9,15 @@ import mx.cinvestav.domain.Constants.ReplicationStrategies
 import mx.cinvestav.domain.Errors.{Failure, RFGreaterThanAR}
 import mx.cinvestav.domain.{CommandId, Errors, NodeState, Payloads}
 import mx.cinvestav.commons.storage.FileMetadata
+import mx.cinvestav.commons.payloads
 import mx.cinvestav.utils.Command
 import org.typelevel.log4cats.Logger
 import io.circe.syntax._
 import io.circe.generic.auto._
 
-class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO, Payloads.UploadFile]{
+class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO, payloads.UploadFile]{
 
-  def logE(payload: Payloads.UploadFile): EitherT[IO, Failure, Unit] =
+  def logE(payload: payloads.UploadFile): EitherT[IO, Failure, Unit] =
     Logger.eitherTLogger[IO,Failure].debug(
       CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} " +s"${payload.replicationFactor} ${payload.experimentId}"
     )
@@ -34,21 +35,21 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
       ctx.logger.error("UNKNOWN_ERROR")
   }
 
-  def doPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
+  def doPassiveReplication(payload:payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
     _  <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata.copy(replicas=Nil))))
     _  <- ctx.helpers.buildPassiveReplication(payload,metadata)
   } yield ()
 
-  def doActiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
+  def doActiveReplication(payload:payloads.UploadFile,metadata: FileMetadata):IO[Unit] = for {
       currentState <- state.updateAndGet(s=>s.copy(metadata = s.metadata+(payload.fileId->metadata)))
-      _ <- ctx.helpers.activeReplication(payload,metadata)
+      _            <- ctx.helpers.activeReplication(payload,metadata)
     } yield ()
 
-  def handleSaveAndCompressSuccess(payload:Payloads.UploadFile,metadata: FileMetadata): IO[Unit] = for {
-    _ <- ctx.logger.debug(CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} " +s"${payload.replicationFactor} ${payload.experimentId}")
+  def handleSaveAndCompressSuccess(payload:payloads.UploadFile,metadata: FileMetadata): IO[Unit] = for {
+    _            <- ctx.logger.debug(CommandId.UPLOAD_FILE+s" ${payload.id} ${payload.fileId} ${payload.userId} ${payload.url} " +s"${payload.replicationFactor} ${payload.experimentId}")
     currentState <- state.get
 //    Perform replication using a predefined strategy
-       _           <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE)
+       _         <- if(currentState.replicationStrategy == ReplicationStrategies.PASSIVE)
                          doPassiveReplication(payload,metadata)
                      else
                          doActiveReplication(payload,metadata)
@@ -57,7 +58,7 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
     } yield ( )
 
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
-  override def handleRight(payload: Payloads.UploadFile): IO[Unit] = {
+  override def handleRight(payload: payloads.UploadFile): IO[Unit] = {
     val maybeSaveAndCompress:EitherT[IO,Failure,FileMetadata] = for {
       currentState     <- EitherT(state.get.map(_.asRight[Failure]))
 
@@ -79,7 +80,7 @@ class UploadHandler(command: Command[Json],state:Ref[IO,NodeState])(implicit ctx
   }
 
   override def handle(): IO[Unit] =
-    handler(command.payload.as[Payloads.UploadFile])
+    handler(command.payload.as[payloads.UploadFile])
 }
 
 object UploadHandler{

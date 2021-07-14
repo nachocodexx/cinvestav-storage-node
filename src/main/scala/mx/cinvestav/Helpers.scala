@@ -63,7 +63,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 //    _           <- if(maybeFileMetadata.isDefined) IO.unit else IO.unit
   } yield ()
 
-  def activeReplication(payload:Payloads.UploadFile, metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+  def activeReplication(payload:payloads.UploadFile, metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
     currentState  <- ctx.state.get
 //     _            <- Logger[IO].info(s"ACTIVE_REPLICATION ${payload.id} ${payload.fileId} ${payload.experimentId}")
      loadBalancer <-  currentState.loadBalancer.pure[IO]
@@ -71,7 +71,10 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
      _            <- if(storageNodes.length < payload.replicationFactor)
                                 Logger[IO].error(RFGreaterThanAR().message)
               else for {
-                selectedStorageNodes <- loadBalancer.balanceMulti(storageNodes,rounds=payload.replicationFactor).pure[IO]
+                _ <- IO.unit
+                loadBalancerA = loadBalancer.changeBalancer(payload.loadBalancer,reset = false)
+                selectedStorageNodes <- loadBalancerA.balanceMulti(storageNodes,rounds=payload.replicationFactor).pure[IO]
+                _ <- ctx.state.update(s=>s.copy(loadBalancer = loadBalancerA))
 //                CHORD
                 _ <- ctx.state.update(s=>s.copy(activeReplicationCompletion = s.activeReplicationCompletion+(payload.fileId->selectedStorageNodes.length)))
 //
@@ -99,7 +102,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
               } yield ()
   } yield ()
 
-  def saveAndCompress(payload: Payloads.UploadFile, maybeMeta:Option[FileMetadata])(implicit ctx:NodeContext[IO]):EitherT[IO, Failure, FileMetadata] =
+  def saveAndCompress(payload: payloads.UploadFile, maybeMeta:Option[FileMetadata])(implicit ctx:NodeContext[IO]):EitherT[IO, Failure, FileMetadata] =
     if(maybeMeta.isDefined) EitherT.fromEither[IO](Left(DuplicatedReplica(payload.fileId)))
     else for {
       file             <- ctx.helpers.saveFileE(payload)
@@ -113,7 +116,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       _                <- EitherT.fromEither[IO](file.delete().asRight)
     } yield  metadata
 
-  def createFileMetadataE(payload: Payloads.UploadFile,file: File):EitherT[IO, Failure, FileMetadata] = {
+  def createFileMetadataE(payload: payloads.UploadFile,file: File):EitherT[IO, Failure, FileMetadata] = {
       val fileMetadata:EitherT[IO,Failure,FileMetadata] = for {
         timestamp     <- EitherT(IO.realTime.map(x=>(x.toSeconds/1000L).asRight))
         replica       = Replica(config.nodeId,primary = true,0,timestamp)
@@ -132,7 +135,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   }
 
 
-  def buildPassiveReplication(payload:Payloads.UploadFile,metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+  def buildPassiveReplication(payload:payloads.UploadFile,metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
     ip <- ctx.state.get.map(_.ip)
     ext = CompressionUtils.getExtensionByCompressionAlgorithm(payload.compressionAlgorithm)
     passiveRepPayload = Payloads.PassiveReplication(
@@ -227,7 +230,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     transferred   <- transferE(fileId,fos,rbc)
   } yield transferred
 
-  def saveFileE(payload:Payloads.UploadFile): EitherT[IO,Failure,File] = {
+  def saveFileE(payload:payloads.UploadFile): EitherT[IO,Failure,File] = {
     for {
       _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_INIT ${payload.id} ${payload.fileId} " +
         s"${payload.experimentId}")
