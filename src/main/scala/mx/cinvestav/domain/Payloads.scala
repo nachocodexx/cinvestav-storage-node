@@ -44,7 +44,8 @@ object Payloads {
                                replicationFactor:Int,
                                url:String,
                                lastNodeId:String,
-                               experimentId:Int
+                               experimentId:Int,
+                               loadBalancer:String="RB"
                                )
 
   case class AddReplicas(id:String, fileId:String, replica: List[Replica],experimentId:Int)

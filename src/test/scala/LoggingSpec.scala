@@ -1,6 +1,7 @@
 import cats.data.EitherT
 import cats.implicits._
 import cats.effect._
+import mx.cinvestav.commons.balancer.LoadBalancer
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -8,6 +9,17 @@ import java.net.URL
 
 class LoggingSpec extends munit .CatsEffectSuite {
   implicit def unsafeLogger = Slf4jLogger.getLogger[IO]
+  test("Load balancer"){
+    val payloadLoadBalancer =  "2C"
+    val loadBalancer  = "RB"
+    val value = Option.when(payloadLoadBalancer.trim.isEmpty || payloadLoadBalancer.trim.toUpperCase=="DEFAULT")(loadBalancer)
+      .getOrElse(payloadLoadBalancer)
+    val lb = LoadBalancer(value)
+    lb.balance("sn-0"::"sn-1"::"sn-2"::Nil)
+    lb.balance("sn-0"::"sn-1"::"sn-2"::Nil)
+    lb.balance("sn-0"::"sn-1"::"sn-2"::Nil)
+    println(value,lb.counter)
+  }
   test("URL"){
     val url = new URL("http://10.0.0.0/filename.lz4")
     val op = Option.unless("".isEmpty)("")

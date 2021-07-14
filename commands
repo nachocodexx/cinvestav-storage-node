@@ -76,6 +76,7 @@
                   "extension":"pdf",
                   "url":"http://10.0.0.5",
                   "replicationFactor":2,
+                  "loadBalancer":"RB",
                   "compressionAlgorithm":"lz4",
                   "experimentId":0
               }

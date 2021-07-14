@@ -37,6 +37,10 @@ import com.github.gekomad.scalacompress.DecompressionStats
 
 class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]){
 
+  def selectLoadBalancer(defaultLoadBalancer:LoadBalancer,newLoadBalancer:String)(implicit ctx:NodeContext[IO]): LoadBalancer =
+    Option.when(newLoadBalancer.trim.isEmpty || newLoadBalancer.trim.toUpperCase=="DEFAULT")(defaultLoadBalancer)
+      .getOrElse(defaultLoadBalancer.changeBalancer(x=newLoadBalancer.trim.toUpperCase,reset = false))
+
   def replyTo(exchangeName:String,replyTo:String,cmd:CommandData[Json])(implicit ctx:NodeContext[IO]):IO[Unit] = for {
     _ <- IO.unit
     maybeExchangeName = Option.unless(exchangeName.isEmpty)(exchangeName)
@@ -72,11 +76,13 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
                                 Logger[IO].error(RFGreaterThanAR().message)
               else for {
                 _ <- IO.unit
-                loadBalancerA = loadBalancer.changeBalancer(payload.loadBalancer,reset = false)
+//                LOAD BALANCER
+                loadBalancerA        = selectLoadBalancer(currentState.loadBalancer,payload.loadBalancer)
                 selectedStorageNodes <- loadBalancerA.balanceMulti(storageNodes,rounds=payload.replicationFactor).pure[IO]
-                _ <- ctx.state.update(s=>s.copy(loadBalancer = loadBalancerA))
+                _                    <- ctx.state.update(s=>s.copy(loadBalancer = loadBalancerA.changeBalancer(currentState.loadBalancer.getAlgorithm)))
+//               END LOAD BALANCER
 //                CHORD
-                _ <- ctx.state.update(s=>s.copy(activeReplicationCompletion = s.activeReplicationCompletion+(payload.fileId->selectedStorageNodes.length)))
+                _                    <- ctx.state.update(s=>s.copy(activeReplicationCompletion = s.activeReplicationCompletion+(payload.fileId->selectedStorageNodes.length)))
 //
                 publishers <- selectedStorageNodes.traverse(nId =>
                   utils.fromNodeIdToPublisher(
@@ -135,18 +141,19 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   }
 
 
-  def buildPassiveReplication(payload:payloads.UploadFile,metadata: FileMetadata)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
+  def buildPassiveReplication(payload:payloads.UploadFile,metadata: FileMetadata,loadBalancer: LoadBalancer)(implicit ctx:NodeContext[IO]): IO[Unit] = for {
     ip <- ctx.state.get.map(_.ip)
     ext = CompressionUtils.getExtensionByCompressionAlgorithm(payload.compressionAlgorithm)
     passiveRepPayload = Payloads.PassiveReplication(
-    id=payload.id,
-    userId = payload.userId,
-    fileId = payload.fileId,
-    metadata =metadata,
-    replicationFactor = payload.replicationFactor,
-    url= s"http://$ip/${payload.fileId}.$ext",
-    lastNodeId = ctx.config.nodeId,
-    experimentId = payload.experimentId
+      id=payload.id,
+      userId = payload.userId,
+      fileId = payload.fileId,
+      metadata =metadata,
+      replicationFactor = payload.replicationFactor,
+      url= s"http://$ip/${payload.fileId}.$ext",
+      lastNodeId = ctx.config.nodeId,
+      experimentId = payload.experimentId,
+      loadBalancer = loadBalancer.getAlgorithm
     )
     _ <- _passiveReplication(Nil,passiveRepPayload)
   } yield ()
