@@ -8,6 +8,7 @@ import java.nio.channels.ReadableByteChannel
 import cats.implicits._
 import cats.effect.{IO, Ref}
 import dev.profunktor.fs2rabbit.model.ExchangeType
+import fs2.compression.ZLibParams.Header.GZIP
 import fs2.concurrent.SignallingRef
 import mx.cinvestav.Main.NodeContext
 import mx.cinvestav.commons.balancer.LoadBalancer
@@ -18,7 +19,8 @@ import mx.cinvestav.commons.payloads.AddKey
 import mx.cinvestav.config.DefaultConfig
 import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
-import mx.cinvestav.commons.storage.{Replica,FileMetadata}
+import mx.cinvestav.commons.storage.{FileMetadata, Replica}
+import mx.cinvestav.commons.compression
 import mx.cinvestav.utils.RabbitMQUtils
 import org.typelevel.log4cats.Logger
 
@@ -114,7 +116,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       file             <- ctx.helpers.saveFileE(payload)
       _                <-Logger.eitherTLogger[IO,Failure].debug(s"COMPRESSION_INIT ${payload.id} ${payload.fileId} " +
         s"${payload.experimentId}")
-      cs               <- ctx.helpers.compressEIO(file.getPath,s"${config.storagePath}")
+      cs               <- ctx.helpers.compressEIO(file.getPath,s"${config.storagePath}",payload.compressionAlgorithm)
       _                <- Logger.eitherTLogger[IO,Failure]
         .debug(s"COMPRESSION_DONE ${payload.id} ${payload.fileId} ${cs.method} ${cs.millSeconds} ${cs.sizeIn} ${cs
           .sizeOut} ${cs.mbPerSecond} ${payload.experimentId}")
@@ -126,13 +128,14 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       val fileMetadata:EitherT[IO,Failure,FileMetadata] = for {
         timestamp     <- EitherT(IO.realTime.map(x=>(x.toSeconds/1000L).asRight))
         replica       = Replica(config.nodeId,primary = true,0,timestamp)
+        compressionAlgo = compression.fromString(payload.compressionAlgorithm)
         fileMetadata  <- EitherT[IO,Failure,FileMetadata](
           FileMetadata(
-            originalName = payload.filename,
-            originalExtension = payload.extension,
-            compressionAlgorithm = "lz4",
-            size = file.length(),
-            replicas = replica::Nil
+            originalName         = payload.filename,
+            originalExtension    = payload.extension,
+            compressionAlgorithm = compressionAlgo.token,
+            size                 = file.length(),
+            replicas             = replica::Nil
             //            compressionExt = "lz4"
           ).asRight[Failure].pure[IO]
         )
@@ -169,21 +172,6 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     _              <- ctx.logger.debug(s"CONTINUE_PASSIVE_REPLICATION ${newPayload.id} $nextNodeId ${newPayload.experimentId}")
 
   } yield ()
-
-//  def passiveReplication(currentState:NodeState, payload: Payloads.Replication): IO[Unit] = for {
-//    lb             <-  currentState.loadBalancer.pure[IO]
-//    storageNodes   <- currentState.storagesNodes.pure[IO]
-//    availableNodes <- storageNodes.toSet.diff(payload.nodes.filter(_!=config.nodeId).toSet).toList.pure[IO]
-////
-//    nodeId         <- lb.balance(availableNodes).pure[IO]
-//    publisher      <- utils.fromNodeIdToPublisher(nodeId,config.poolId,s"${config.poolId}.$nodeId.default")
-//    cmd            <- CommandData[Json](CommandId.REPLICATION,payload.asJson).pure[IO]
-//    _              <- publisher.publish(cmd.asJson.noSpaces)
-//    _              <- Logger[IO].debug(s"SENT_REPLICATION_CMD ${payload.id} $nodeId ${payload.experimentId}")
-//
-//  } yield ()
-//
-//
 
 
   def _startHeart(heartbeatSignal:SignallingRef[IO,Boolean]): IO[Unit] =  for {
@@ -275,11 +263,24 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
   }
   def decompressEIO(src:String,destination:String): EitherT[IO, Failure, DecompressionStats] =
     EitherT.fromEither[IO](decompressE(src,destination))
+
   def compressE(src:String,destination:String):Either[Failure,CompressionStats] =
     Either.fromTry(lz4Compress(src,destination))
       .leftFlatMap(t=>Left(CompressionFail(t.getMessage)))
-  def compressEIO(src:String,destination:String): EitherT[IO, Failure, CompressionStats] =
-    EitherT.fromEither[IO](this.compressE(src,destination))
+
+
+  type CompressionFn = (String,String)=>Try[CompressionStats]
+  def _compressE(tFn:CompressionFn)(src:String,destination:String):EitherT[IO,Failure,CompressionStats] =
+    EitherT.fromEither[IO](Either.fromTry(tFn(src,destination)).leftFlatMap(t=>Left(CompressionFail(t.getMessage))))
+
+  def compressEIO(src:String,destination:String,compressionAlgorithm:String): EitherT[IO, Failure, CompressionStats] = {
+    compressionAlgorithm match {
+      case compression.LZ4  =>  _compressE(lz4Compress)(src,destination)
+      case compression.GZIP => _compressE(gzCompress)(src,destination)
+      case _      => _compressE(gzCompress)(src,destination)
+    }
+
+  }
 
 
   def saveFile(filename:String, url:String, position:Int=0): IO[File] =

@@ -7,10 +7,11 @@ import mx.cinvestav.domain.CommandId
 import io.circe.syntax._
 import io.circe.generic.auto._
 import mx.cinvestav.commons.commands.CommandData
+import mx.cinvestav.commons.compression
 import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.utils.Command
 import mx.cinvestav.domain.Errors
-import mx.cinvestav.commons.payloads.{FileFound,DownloadFile}
+import mx.cinvestav.commons.payloads.{DownloadFile, FileFound}
 
 class DownloadFileHandler(command:Command[Json])(implicit ctx:NodeContext[IO]) extends CommandHandler[IO,DownloadFile]{
   override def handleLeft(df: DecodingFailure): IO[Unit] = ctx.logger.error(df.getMessage())
@@ -22,7 +23,8 @@ class DownloadFileHandler(command:Command[Json])(implicit ctx:NodeContext[IO]) e
     _            <- fileMetadata match {
       case Some(value) => for {
         _          <- ctx.logger.debug(s"${CommandId.DOWNLOAD_FILE} ${payload.id} ${payload.fileId} ${value.size} ${payload.experimentId}")
-        ext        = CompressionUtils.getExtensionByCompressionAlgorithm(value.compressionAlgorithm)
+        compressionAlgo = compression.fromString(value.compressionAlgorithm)
+        ext             = compressionAlgo.extension
         url        = s"http://${currentState.ip}/${payload.fileId}.$ext"
         _ <- IO.println(value.size)
         cmdPayload = FileFound(
