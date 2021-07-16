@@ -93,7 +93,8 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
                     routingKey   = s"${config.poolId}.$nId.default"
                   )
                 )
-                compressionExt = CompressionUtils.getExtensionByCompressionAlgorithm(payload.compressionAlgorithm)
+                compressionAlgo =  compression.fromString(payload.compressionAlgorithm.trim.toUpperCase)
+                compressionExt  = compressionAlgo.extension
                 _payload = Payloads.ActiveReplication(
                     id           = payload.id,
                     metadata     =  metadata,
@@ -116,7 +117,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       file             <- ctx.helpers.saveFileE(payload)
       _                <-Logger.eitherTLogger[IO,Failure].debug(s"COMPRESSION_INIT ${payload.id} ${payload.fileId} " +
         s"${payload.experimentId}")
-      cs               <- ctx.helpers.compressEIO(file.getPath,s"${config.storagePath}",payload.compressionAlgorithm)
+      cs               <- ctx.helpers.compressEIO(file.getPath,s"${config.storagePath}",payload.compressionAlgorithm.trim.toUpperCase())
       _                <- Logger.eitherTLogger[IO,Failure]
         .debug(s"COMPRESSION_DONE ${payload.id} ${payload.fileId} ${cs.method} ${cs.millSeconds} ${cs.sizeIn} ${cs
           .sizeOut} ${cs.mbPerSecond} ${payload.experimentId}")

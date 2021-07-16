@@ -6,6 +6,7 @@ import io.circe.syntax._
 import io.circe.generic.auto._
 import mx.cinvestav.Main.NodeContext
 import mx.cinvestav.commons.commands.{CommandData, Identifiers}
+import mx.cinvestav.commons.compression
 import mx.cinvestav.commons.payloads.AddKey
 import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
@@ -57,7 +58,8 @@ class PassiveReplicationHandler(command: Command[Json],state:Ref[IO,NodeState])(
 //        _
       timestamp           <- IO.realTime.map(_.toSeconds)
       replica             = Replica(ctx.config.nodeId,primary = false,0,timestamp)
-      ext                 = CompressionUtils.getExtensionByCompressionAlgorithm(payload.metadata.compressionAlgorithm)
+      compressionAlgo     = compression.fromString(payload.metadata.compressionAlgorithm)
+      ext                 = compressionAlgo.extension
       fileMetadata        = payload.metadata.copy(replicas = payload.metadata.replicas :+ replica)
       currentState        <- state.updateAndGet(s=>s.copy(metadata = s.metadata + (payload.fileId -> fileMetadata) ))
       ip                  = currentState.ip
