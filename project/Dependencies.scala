@@ -11,7 +11,15 @@ object Dependencies {
     lazy val MUnitCats ="org.typelevel" %% "munit-cats-effect-3" % "1.0.3" % Test
     lazy val Log4Cats =   "org.typelevel" %% "log4cats-slf4j"   % "2.1.1"
     lazy val ScalaCompress = "com.github.gekomad" %% "scala-compress" % "1.0.0"
-    Seq(RabbitMQUtils,PureConfig,Commons,MUnitCats,Log4Cats,ScalaCompress)
+    lazy val ApacheCommonsIO = "commons-io" % "commons-io" % "2.11.0"
+    val http4sVersion = "1.0.0-M23"
+    lazy val Http4s =Seq(
+      "org.http4s" %% "http4s-dsl" ,
+      "org.http4s" %% "http4s-blaze-server" ,
+      "org.http4s" %% "http4s-blaze-client",
+      "org.http4s" %% "http4s-circe"
+    ).map(_ % http4sVersion)
+    Seq(RabbitMQUtils,PureConfig,Commons,MUnitCats,Log4Cats,ScalaCompress,ApacheCommonsIO) ++Http4s
   }
 }
 

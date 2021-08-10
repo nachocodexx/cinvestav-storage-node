@@ -1,4 +1,12 @@
 {
+  "id":"op0",
+  "fileId":"e583ba29-bd86-4d5c-862f-6bb2db1a2748",
+  "compressionAlgorithm":"LZ4",
+  "source":"/home/nacho/Programming/Scala/storage-node/target/sources",
+  "replicationFactor":2
+}
+_______________________________________________________________________
+{
   "commandId":"UPLOAD_FILE",
     "payload":{
       "id":"0",

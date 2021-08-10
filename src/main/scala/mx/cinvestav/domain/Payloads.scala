@@ -4,6 +4,13 @@ import mx.cinvestav.commons.storage.{Replica,FileMetadata}
 object Payloads {
   case class FileFound(id:String,fileId:String,url:String,compressionAlgorithm:String)
   case class DownloadFile(id:String,fileId:String,exchangeName:String,replyTo:String)
+  case class UploadFileV5(
+                         id:String,
+                         fileId:String,
+                         source:String,
+                         replicationFactor:Int,
+                         compressionAlgorithm:String = "lz4",
+                       )
   case class UploadFile(
                          id:String,
                          fileId:String,

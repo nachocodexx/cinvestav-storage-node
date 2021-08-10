@@ -7,9 +7,11 @@ import java.nio.channels.Channels
 import java.nio.channels.ReadableByteChannel
 import cats.implicits._
 import cats.effect.{IO, Ref}
-import dev.profunktor.fs2rabbit.model.ExchangeType
+import dev.profunktor.fs2rabbit.model.AmqpFieldValue.{BooleanVal, StringVal}
+import dev.profunktor.fs2rabbit.model.{AmqpMessage, AmqpProperties, ExchangeType}
 import fs2.compression.ZLibParams.Header.GZIP
 import fs2.concurrent.SignallingRef
+import mx.cinvestav.Declarations.NodeContextV5
 import mx.cinvestav.Main.NodeContext
 import mx.cinvestav.commons.balancer.LoadBalancer
 import mx.cinvestav.domain.Errors.{CompressionFail, DecompressionFail, DuplicatedReplica, Failure, FileNotFound, RFGreaterThanAR}
@@ -22,6 +24,7 @@ import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.commons.storage.{FileMetadata, Replica}
 import mx.cinvestav.commons.compression
 import mx.cinvestav.utils.RabbitMQUtils
+import mx.cinvestav.utils.v2.PublisherV2
 import org.typelevel.log4cats.Logger
 
 import scala.util.Try
@@ -36,9 +39,11 @@ import mx.cinvestav.utils.PublisherNode
 import com.github.gekomad.scalacompress.Compressors._
 import com.github.gekomad.scalacompress.CompressionStats
 import com.github.gekomad.scalacompress.DecompressionStats
+import mx.cinvestav.utils.v2.encoders._
 
 class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]){
 
+  //  ________________________________________________________________________________
   def selectLoadBalancer(defaultLoadBalancer:LoadBalancer,newLoadBalancer:String)(implicit ctx:NodeContext[IO]): LoadBalancer =
     Option.when(newLoadBalancer.trim.isEmpty || newLoadBalancer.trim.toUpperCase=="DEFAULT")(defaultLoadBalancer)
       .getOrElse(defaultLoadBalancer.changeBalancer(x=newLoadBalancer.trim.toUpperCase,reset = false))
@@ -50,7 +55,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     _ <- maybeExchangeName.mproduct(_ => maybeReplyTo) match {
       case Some(value) =>for {
         publisher <- ctx.utils.createPublisher(value._1,value._2)
-        _        <- publisher(cmd.asJson.noSpaces)
+//        _        <- publisher(cmd.asJson.noSpaces)
       } yield ()
       case None => IO.unit
     }
@@ -182,10 +187,10 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     _               <- utils.createQueue(heartbeatQueue,config.poolId,ExchangeType.Topic,heartbeatRk)
     //        HEARTBEAT PUBLISHER
     heartbeatPublisher <- utils.createPublisher(config.poolId,heartbeatRk)
-    _                  <- utils
-      .publishEvery(this.heartbeat(_,heartbeatPublisher),config.heartbeatTime milliseconds)
-      .interruptWhen(heartbeatSignal)
-      .compile.drain.start
+//    _                  <- utils
+//      .publishEvery(this.heartbeat(_,heartbeatPublisher),config.heartbeatTime milliseconds)
+//      .interruptWhen(heartbeatSignal)
+//      .compile.drain.start
   } yield ()
 
   def heartbeat(value:Int,publisher:String=>IO[Unit]):IO[Unit] =
@@ -233,30 +238,11 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       completeUrl   <- EitherT.fromEither[IO](s"${payload.url}/${payload.filename}.${payload.extension}".asRight)
       website       =   new URL(completeUrl)
       filePath      = s"${config.storagePath}/${payload.fileId}"
-      transferred <- downloadFileFormURL(payload.fileId,filePath,website)
-//      rbc           <- EitherT.fromEither[IO](newChannelE(payload.filename,website))
-//      filePath      = s"${config.storagePath}/${payload.fileId}"
-//      fos           = new FileOutputStream(filePath)
-//      transferred   <- transferE(payload.filename,fos,rbc)
-      _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_DONE ${payload.id} ${payload
-        .fileId} $transferred ${payload.experimentId}")
+      transferred   <- downloadFileFormURL(payload.fileId,filePath,website)
+      _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_FILE_DONE ${payload.id} ${payload.fileId} $transferred ${payload.experimentId}")
       file          <- EitherT.fromEither[IO](Right(new File(filePath)))
     } yield file
   }
-//  def saveReplica(payload:Payloads.Replication): EitherT[IO, Failure, Unit] = for {
-//    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_INIT ${payload.id} ${payload.fileId} " +
-//      s"${payload.experimentId}")
-//    completeUrl   <- EitherT.fromEither[IO](s"${payload.url}/${payload.fileId}.${payload.extension}".asRight)
-//    website       =   new URL(completeUrl)
-//    rbc           <- EitherT.fromEither[IO](newChannelE(payload.fileId,website))
-//    filePath      = s"${config.storagePath}/${payload.fileId}.${payload.extension}"
-//    fos           = new FileOutputStream(filePath)
-//    transferred   <- transferE(payload.fileId,fos,rbc)
-//    _             <- Logger.eitherTLogger[IO,Failure].debug(s"SAVE_REPLICA_DONE ${payload.id} ${payload.fileId} " +
-//      s"$transferred ${payload.experimentId}")
-////    file          <- EitherT.fromEither[IO](Right(new File(filePath)))
-//  } yield ()
-//
 
   def decompressE(src:String,destination:String): Either[Failure, DecompressionStats] = {
     Either.fromTry(lz4Decompress(src, destination))
@@ -307,10 +293,34 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
       routingKey = currentState.chordRoutingKey
     )
 //    addKeyCmd = CommandData[Json](Identifiers.ADD_KEY,addKeyPayload.asJson).asJson.noSpaces
-    _ <- chordPublisher(cmd.asJson.noSpaces)
+//    _ <- chordPublisher(cmd.asJson.noSpaces)
   } yield ()
 }
 
 object Helpers {
   def apply()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]) = new Helpers()
+
+
+  def passiveReplicationV5(payload: Payloads.UploadFileV5,storageNodes:List[PublisherV2])(implicit ctx:NodeContextV5): IO[Unit] = {
+    for {
+      _ <- ctx.logger.info("PASSIVE_REPLICATION")
+    } yield ()
+  }
+
+  def activeReplicationV5(payload: Payloads.UploadFileV5,storageNodes:List[PublisherV2])(implicit ctx:NodeContextV5): IO[Unit] = {
+
+    for {
+      _ <- ctx.logger.info("ACTIVE MECHANISM")
+      props = AmqpProperties(
+        headers = Map(
+          "commandId" ->StringVal(Identifiers.UPLOAD_FILE),
+          "isSlave" -> BooleanVal(true)
+        ),
+        replyTo = ctx.config.nodeId.some
+      )
+      message = AmqpMessage(payload=payload.asJson.noSpaces,properties = props)
+      _ <- ctx.logger.info(storageNodes.toString())
+      _ <- storageNodes.traverse(_.publish(message))
+    } yield ()
+  }
 }
