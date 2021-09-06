@@ -2,13 +2,20 @@ import cats.data.EitherT
 import cats.implicits._
 import cats.effect._
 import mx.cinvestav.commons.balancer.LoadBalancer
+import mx.cinvestav.commons.fileX.FileMetadata
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 import java.net.URL
+import java.nio.file.Paths
 
 class LoggingSpec extends munit .CatsEffectSuite {
   implicit def unsafeLogger = Slf4jLogger.getLogger[IO]
+  test("URL"){
+    val url = new URL("http://localhost:6666/download/my_file.lz4")
+    val metadata = FileMetadata.fromPath(Paths.get(url.getPath))
+    println(url,metadata)
+  }
   test("Load balancer"){
     val payloadLoadBalancer =  "2C"
     val loadBalancer  = "RB"

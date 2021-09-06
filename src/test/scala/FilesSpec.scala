@@ -6,16 +6,18 @@ import mx.cinvestav.Helpers
 import mx.cinvestav.commons.commands.CommandData
 import mx.cinvestav.commons.{balancer, payloads}
 import mx.cinvestav.commons.commands.Identifiers
-import mx.cinvestav.config.DefaultConfig
+import mx.cinvestav.config.{DefaultConfig, DefaultConfigV5}
 import mx.cinvestav.domain.{CommandId, Payloads}
 import mx.cinvestav.domain.Errors.Failure
 import mx.cinvestav.utils.RabbitMQUtils
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 import scala.concurrent.ExecutionContext
+import scala.util.Random
 //
 import pureconfig.generic.auto._
 import pureconfig.ConfigSource
@@ -27,7 +29,7 @@ import scala.sys.process._
 
 
 class FilesSpec extends munit.CatsEffectSuite {
-  implicit val config = ConfigSource.default.loadOrThrow[DefaultConfig]
+  implicit val config = ConfigSource.default.loadOrThrow[DefaultConfigV5]
 
   override def munitTimeout: Duration = Int.MaxValue seconds
   case class Testing(value:Int)
@@ -37,7 +39,7 @@ class FilesSpec extends munit.CatsEffectSuite {
   implicit val testEncoder:Encoder[Testing] =deriveEncoder
   implicit val okEncoder:Encoder[payloads.Ok] =deriveEncoder
   implicit val electionEncoder:Encoder[payloads.Election] =deriveEncoder
-  val rabbitMQConfig = RabbitMQUtils.dynamicRabbitMQConfig(config.rabbitmq)
+  val rabbitMQConfig = RabbitMQUtils.parseRabbitMQClusterConfig(config.rabbitmq)
   implicit val unsafeLogger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
   case class Command(command:Json)
 
@@ -45,7 +47,7 @@ class FilesSpec extends munit.CatsEffectSuite {
     Stream.iterate(0)(_+1)
     .covary[IO]
     .evalMap{ i =>
-      val node = lb.balance(bullies)
+      val node = lb.balance(bullies,Map.empty[String,Int])
       val uploadPayload = Payloads.UploadFile(
         id     = s"op-$i",
         fileId = UUID.randomUUID().toString,
@@ -73,12 +75,12 @@ class FilesSpec extends munit.CatsEffectSuite {
 //    val cmd = Seq("/bin/bash","-c",cmdRm)
 
     RabbitMQUtils.init[IO](rabbitMQConfig) { implicit utils =>
-      implicit val H: Helpers = Helpers()
+//      implicit val H: Helpers = Helpers()
       val totalOfNodes = 3
       val nodesIds = 0 until totalOfNodes
       val storagesNodes = nodesIds.map(id=>s"sn-$id").toList
       val bullies = nodesIds.map(id=>s"cs-$id").toList
-      val lb = balancer.LoadBalancer(config.loadBalancer)
+      val lb = balancer.LoadBalancer(config.loadBalancer.strategy)
       val MAX_EXPERIMENTS = 50
       Stream.iterate(0)(_+1)
         .covary[IO]
@@ -105,28 +107,28 @@ class FilesSpec extends munit.CatsEffectSuite {
   }
 
   test("Compression".ignore){
-    RabbitMQUtils.init[IO](rabbitMQConfig){ implicit  utils =>
-      val helpers = Helpers()
-      val app = for {
-        stats <-EitherT.fromEither[IO](
-          helpers.compressE(
-            src = "/home/nacho/Programming/Scala/storage-node/target/storage/01",
-            destination = "/home/nacho/Programming/Scala/storage-node/target/storage")
-        )
-        stats01 <- EitherT.fromEither[IO](helpers.decompressE
-        ("/home/nacho/Programming/Scala/storage-node/target/storage/01.lz4",
-          "/home/nacho/Programming/Scala/storage-node/target/storage/decompress"))
-        _     <- Logger.eitherTLogger[IO,Failure].debug(stats.toString)
-        _     <- Logger.eitherTLogger[IO,Failure].debug(stats01.toString)
-      } yield ( )
-      app.value.flatMap {
-        case Left(value) =>
-          Logger[IO].debug(value.toString)
-        case Right(value) =>
-          Logger[IO].debug("SUCCESS")
-      }
-//        Logger[IO].debug("DONE!")
-    }
+//    RabbitMQUtils.init[IO](rabbitMQConfig){ implicit  utils =>
+////      val helpers = Helpers()
+//      val app = for {
+//        stats <-EitherT.fromEither[IO](
+//          helpers.compressE(
+//            src = "/home/nacho/Programming/Scala/storage-node/target/storage/01",
+//            destination = "/home/nacho/Programming/Scala/storage-node/target/storage")
+//        )
+//        stats01 <- EitherT.fromEither[IO](helpers.decompressE
+//        ("/home/nacho/Programming/Scala/storage-node/target/storage/01.lz4",
+//          "/home/nacho/Programming/Scala/storage-node/target/storage/decompress"))
+//        _     <- Logger.eitherTLogger[IO,Failure].debug(stats.toString)
+//        _     <- Logger.eitherTLogger[IO,Failure].debug(stats01.toString)
+//      } yield ( )
+//      app.value.flatMap {
+//        case Left(value) =>
+//          Logger[IO].debug(value.toString)
+//        case Right(value) =>
+//          Logger[IO].debug("SUCCESS")
+//      }
+////        Logger[IO].debug("DONE!")
+//    }
 
   }
 
@@ -153,7 +155,15 @@ class FilesSpec extends munit.CatsEffectSuite {
       IO.pure(decode(str0))
     }.flatMap(IO.println)
   }
-  test("Basics".ignore) {
+  test("Basics") {
+    val snId0 = "sp-0/sn-0"
+    val snId1 = "sp-0/sn-1"
+    val snId2 = Random.alphanumeric.take(10).mkString.toLowerCase
+    println(snId2)
+//    val f0 = new File(s"/home/nacho/Programming/Scala/storage-node/target/storage/${snId0}")
+//    val f1 = new File(s"/home/nacho/Programming/Scala/storage-node/target/storage/${snId1}")
+//    f0.mkdirs()
+//    f1.mkdirs()
 //    Helpers().saveFile("f-00.gif","http://localhost:6666/00.gif")
 //      .flatMap(IO.println)
   }

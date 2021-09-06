@@ -5,6 +5,19 @@
   "source":"/home/nacho/Programming/Scala/storage-node/target/sources",
   "replicationFactor":2
 }
+REMOVE STORAGE NODE
+{
+"storageNodeId":"sn-0"
+}
+______________________________________
+______________UPLOAD__________________
+{
+ "id":"file_id",
+ "source":"",
+ "url":"http://localhost:6000/0.pdf",
+ "replicationFactor":1
+}
+
 _______________________________________________________________________
 {
   "commandId":"UPLOAD_FILE",

@@ -16,7 +16,7 @@
         <!-- use the previously created timestamp to create a uniquely
              named log file -->
         <filter class="ch.qos.logback.classic.filter.LevelFilter">
-            <level>DEBUG</level>
+            <level>INFO</level>
             <onMatch>ACCEPT</onMatch>
             <onMismatch>DENY</onMismatch>
         </filter>
@@ -31,10 +31,20 @@
 <!--        </encoder>-->
     </appender>
 
-    <root level="DEBUG">
-        <appender-ref ref="STDOUT" />
-        <appender-ref ref="FILE" />
-    </root>
+    <logger name="mx.cinvestav.MainV5">
+        <appender-ref ref="FILE"/>
+    </logger>
+    <logger name="mx.cinvestav.MainV5">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
+<!--    <logger name="mx.cinvestav.MainV5">-->
+<!--        <appender-ref ref="FILE"/>-->
+<!--    </logger>-->
+<!--    <root level="DEBUG">-->
+<!--        <appender-ref ref="STDOUT" />-->
+<!--&lt;!&ndash;        <appender-ref ref="FILE" />&ndash;&gt;-->
+<!--    </root>-->
 <!--    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">-->
 <!--        <encoder>-->
 <!--            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level - %msg - %elapsedTime{}%n</pattern>-->

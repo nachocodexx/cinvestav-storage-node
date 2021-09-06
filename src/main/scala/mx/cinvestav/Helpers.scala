@@ -7,11 +7,11 @@ import java.nio.channels.Channels
 import java.nio.channels.ReadableByteChannel
 import cats.implicits._
 import cats.effect.{IO, Ref}
-import dev.profunktor.fs2rabbit.model.AmqpFieldValue.{BooleanVal, StringVal}
-import dev.profunktor.fs2rabbit.model.{AmqpMessage, AmqpProperties, ExchangeType}
+import dev.profunktor.fs2rabbit.model.AmqpFieldValue.{ArrayVal, BooleanVal, StringVal}
+import dev.profunktor.fs2rabbit.model.{AmqpMessage, AmqpProperties, ExchangeName, ExchangeType, RoutingKey}
 import fs2.compression.ZLibParams.Header.GZIP
 import fs2.concurrent.SignallingRef
-import mx.cinvestav.Declarations.NodeContextV5
+import mx.cinvestav.Declarations.{DownloadError, NodeContextV5, NodeError, StorageNode}
 import mx.cinvestav.Main.NodeContext
 import mx.cinvestav.commons.balancer.LoadBalancer
 import mx.cinvestav.domain.Errors.{CompressionFail, DecompressionFail, DuplicatedReplica, Failure, FileNotFound, RFGreaterThanAR}
@@ -23,10 +23,13 @@ import mx.cinvestav.domain.Constants.CompressionUtils
 import mx.cinvestav.domain.{CommandId, NodeState, Payloads}
 import mx.cinvestav.commons.storage.{FileMetadata, Replica}
 import mx.cinvestav.commons.compression
+import mx.cinvestav.commons.fileX.{FileMetadata => Metadata}
+import mx.cinvestav.commons.types.Location
 import mx.cinvestav.utils.RabbitMQUtils
-import mx.cinvestav.utils.v2.PublisherV2
+import mx.cinvestav.utils.v2.{PublisherConfig, PublisherV2, RabbitMQContext}
 import org.typelevel.log4cats.Logger
 
+import javax.print.attribute.standard.Destination
 import scala.util.Try
 //
 import io.circe.Json
@@ -40,8 +43,12 @@ import com.github.gekomad.scalacompress.Compressors._
 import com.github.gekomad.scalacompress.CompressionStats
 import com.github.gekomad.scalacompress.DecompressionStats
 import mx.cinvestav.utils.v2.encoders._
+import org.apache.commons.io.FileUtils
+import mx.cinvestav.commons.payloads.{v2=>PAYLOADS}
 
 class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]){
+
+
 
   //  ________________________________________________________________________________
   def selectLoadBalancer(defaultLoadBalancer:LoadBalancer,newLoadBalancer:String)(implicit ctx:NodeContext[IO]): LoadBalancer =
@@ -172,7 +179,7 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
     storageNodes   = currentState.storagesNodes
     availableNodes = storageNodes.toSet.diff(replicaNodes.toSet).toList
     cmd            = CommandData[Json](CommandId.PASSIVE_REPLICATION,newPayload.asJson).asJson.noSpaces
-    nextNodeId     <- lb.balance(availableNodes).pure[IO]
+    nextNodeId     <- lb.balance(availableNodes,Map.empty[String,Int]).pure[IO]
     publisher      <- utils.fromNodeIdToPublisher(nextNodeId,config.poolId,s"${config.poolId}.$nextNodeId.default")
     _              <- publisher.publish(cmd)
     _              <- ctx.logger.debug(s"CONTINUE_PASSIVE_REPLICATION ${newPayload.id} $nextNodeId ${newPayload.experimentId}")
@@ -300,26 +307,113 @@ class Helpers()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: 
 object Helpers {
   def apply()(implicit utils: RabbitMQUtils[IO],config: DefaultConfig,logger: Logger[IO]) = new Helpers()
 
+  //  ________________________________________________________________________________
+  def replicationCompleted(taskId:String,chunkId:String,location:Location)(implicit ctx:NodeContextV5) = for {
 
-  def passiveReplicationV5(payload: Payloads.UploadFileV5,storageNodes:List[PublisherV2])(implicit ctx:NodeContextV5): IO[Unit] = {
+    currentState <- ctx.state.get
+    lb           = currentState.loadBalancerPublisher
+    timestamp    <- IO.realTime.map(_.toMillis)
+    nodeId       = ctx.config.nodeId
+    properties   = AmqpProperties(headers = Map("commandId" -> StringVal("REPLICATION_COMPLETED") ))
+
+    msgPayload = PAYLOADS.ReplicationCompleted(
+      replicationTaskId = taskId,
+      storageNodeId     = nodeId,
+      chunkId           = chunkId,
+      //        uploadFileOutput.metadata.filename.value,
+      timestamp         = timestamp,
+      location          = location
+      //        Location(url=url,source =source.toString)
+    ).asJson.noSpaces
+    msg      = AmqpMessage[String](payload = msgPayload,properties = properties)
+    _ <- lb.publish(msg)
+  } yield ()
+
+  def fromStorageNodeToPublisher(x:StorageNode)(implicit rabbitMQContext:RabbitMQContext): PublisherV2 = {
+    val exchange = ExchangeName(x.poolId)
+    val routingKey = RoutingKey(s"${x.poolId}.${x.nodeId}")
+    val cfg = PublisherConfig(exchangeName = exchange,routingKey = routingKey)
+    PublisherV2.create(x.nodeId,cfg)
+  }
+
+  def downloadFromURL(url:URL,destination: File): Either[DownloadError, Unit] = {
+    try{
+        Right(FileUtils.copyURLToFile(url,destination))
+    } catch {
+      case ex: Throwable => Left(DownloadError(ex.getMessage))
+    }
+  }
+
+  def transferE(filename:String, fos:FileOutputStream,rbc:ReadableByteChannel): EitherT[IO, Failure, Long] =
+    EitherT(
+      fos.getChannel.transferFrom(rbc,0,Long.MaxValue)
+        .pure[IO]
+        .map(_.asRight[Failure])
+        .handleErrorWith{ t =>
+          val res:Either[Failure,Long] = FileNotFound(filename).asLeft[Long]
+          IO.pure(res)
+        }
+    )
+
+  def newChannelE(filename:String,url: URL): Either[FileNotFound, ReadableByteChannel] = Either.fromTry(
+    Try {
+      Channels.newChannel(url.openStream())
+    }
+  )
+    .flatMap(_.asRight[Failure])
+    .leftFlatMap{ t=>
+      Left(FileNotFound(filename))
+    }
+
+
+  def downloadFileFormURLV5(fileId:String, outputPath:String, url: URL): EitherT[IO, DownloadError, Long] = for {
+    rbc           <- EitherT.fromEither[IO](newChannelE(fileId,url))
+      .leftMap(e=>DownloadError(e.message))
+    fos           = new FileOutputStream(outputPath)
+    //
+    transferred   <- transferE(fileId,fos,rbc)
+      .leftMap(e=>DownloadError(e.message))
+  } yield transferred
+
+  def passiveReplicationV5(payload: Payloads.UploadV5,metadata: Metadata)(implicit ctx:NodeContextV5): IO[Unit] = {
     for {
-      _ <- ctx.logger.info("PASSIVE_REPLICATION")
+      currentState <- ctx.state.get
+      nodeId       = ctx.config.nodeId
+      storagePath  = ctx.config.storagePath
+      fullname     = metadata.fullname
+//      /data/FILE_ID.LZ4
+      filePath     = s"$storagePath/$fullname"
+      ip           = currentState.ip
+      port         = ctx.config.port
+      _            <- ctx.logger.info("PASSIVE_REPLICATION")
+      newPayload = payload.copy(
+//        replicationFactor = payload.replicationFactor-1,
+        url = s"http://$ip:$port/$filePath"
+      )
+      properties = AmqpProperties(
+        headers = Map(
+          "commandId"->StringVal(Identifiers.UPLOAD_FILE),
+          "storageNodes" -> ArrayVal(Vector( StringVal(nodeId)  ) )
+        )
+      )
+      message    = AmqpMessage[String](payload=newPayload.asJson.noSpaces,properties =properties )
+//      _ <-
     } yield ()
   }
 
-  def activeReplicationV5(payload: Payloads.UploadFileV5,storageNodes:List[PublisherV2])(implicit ctx:NodeContextV5): IO[Unit] = {
+  def activeReplicationV5(payload: Payloads.UploadV5, storageNodes:List[PublisherV2])(implicit ctx:NodeContextV5): IO[Unit] = {
 
     for {
-      _ <- ctx.logger.info("ACTIVE MECHANISM")
+      _ <- ctx.logger.debug(s"ACTIVE_REPLICATION")
       props = AmqpProperties(
         headers = Map(
-          "commandId" ->StringVal(Identifiers.UPLOAD_FILE),
-          "isSlave" -> BooleanVal(true)
+          "commandId" -> StringVal(Identifiers.UPLOAD_FILE),
+          "isSlave"   -> BooleanVal(true),
         ),
         replyTo = ctx.config.nodeId.some
       )
       message = AmqpMessage(payload=payload.asJson.noSpaces,properties = props)
-      _ <- ctx.logger.info(storageNodes.toString())
+      _ <- ctx.logger.info(storageNodes.mkString(","))
       _ <- storageNodes.traverse(_.publish(message))
     } yield ()
   }
